@@ -28,6 +28,23 @@ export type ConflictCleanupResult = {
 	folderWarnings: string[];
 };
 
+/** 冲突副本与其原路径文件的对照信息，供用户决定覆盖方向 */
+export type ConflictPair = {
+	/** _fit/ 内副本路径 */
+	path: string;
+	/** 原路径（无 _fit/ 前缀） */
+	originalPath: string;
+	size: number;
+	/** 副本最后修改时间（epoch ms） */
+	mtime: number;
+	/** 原路径文件是否存在 */
+	originalExists: boolean;
+	/** 原路径文件最后修改时间（不存在时为 null） */
+	originalMtime: number | null;
+	/** 原路径文件大小（不存在时为 null） */
+	originalSize: number | null;
+};
+
 function sameState(left: FileStates, right: FileStates): boolean {
 	const leftPaths = Object.keys(left);
 	const rightPaths = Object.keys(right);
@@ -241,28 +258,44 @@ export class DirectionalOperationRunner {
 		}
 	}
 
-	async listConflictFiles(scope: "last" | "all"): Promise<Array<{ path: string; size: number }>> {
+	async listConflictFiles(scope: "last" | "all"): Promise<ConflictPair[]> {
 		if (scope === "last" && !this.hasLastConflictSet) {
 			throw new Error("本次插件运行期间没有可用的上次同步冲突清单，请改选「全部冲突副本」。");
 		}
 		const candidates = scope === "last"
 			? [...this.lastConflictPaths]
 			: this.fit.localVault.vault.getFiles().map(file => file.path).filter(path => path.startsWith("_fit/"));
-		const result = await Promise.all(Array.from(new Set(candidates)).sort().map(async path => {
+		const result = await Promise.all(Array.from(new Set(candidates)).sort().map(async (path): Promise<ConflictPair | null> => {
 			const stat = await this.fit.localVault.vault.adapter.stat(path);
 			if (!stat) return null;
 			if (stat.type !== "file") throw new Error(`冲突清理只处理文件，不处理文件夹：${path}`);
-			return { path, size: stat.size };
+			// 原路径对照信息：帮助用户判断"用副本覆盖原文件"还是"保留原文件"
+			const originalPath = path.slice("_fit/".length);
+			const originalStat = await this.fit.localVault.vault.adapter.stat(originalPath);
+			const originalIsFile = originalStat?.type === "file";
+			return {
+				path,
+				originalPath,
+				size: stat.size,
+				mtime: stat.mtime,
+				originalExists: originalIsFile,
+				originalMtime: originalIsFile ? originalStat.mtime : null,
+				originalSize: originalIsFile ? originalStat.size : null
+			};
 		}));
-		return result.filter((entry): entry is { path: string; size: number } => entry !== null);
+		return result.filter((entry): entry is ConflictPair => entry !== null);
 	}
 
-	async cleanupConflicts(scope: "last" | "all"): Promise<ConflictCleanupResult> {
+	async cleanupConflicts(scope: "last" | "all", selectedPaths?: string[]): Promise<ConflictCleanupResult> {
 		if (this.running) throw new Error("另一个同步操作正在运行。");
 		this.running = true;
 		try {
 			const files = await this.listConflictFiles(scope);
-			const settled = await Promise.allSettled(files.map(({ path }) => this.fit.localVault.applyChanges([], [path])));
+			// 只删除用户勾选的项；未勾选的一律保留
+			const selected = selectedPaths
+				? files.filter(({ path }) => selectedPaths.includes(path))
+				: files;
+			const settled = await Promise.allSettled(selected.map(({ path }) => this.fit.localVault.applyChanges([], [path])));
 			const deleted: string[] = [];
 			const failed: Array<{ path: string; error: string }> = [];
 			settled.forEach((result, index) => {
@@ -271,14 +304,14 @@ export class DirectionalOperationRunner {
 			});
 			const folderWarnings: string[] = [];
 			const folders = new Set<string>();
-			for (const { path } of files) {
+			for (const { path } of selected) {
 				let parent = path.slice(0, path.lastIndexOf("/"));
 				while (parent.startsWith("_fit/") && parent.length > "_fit/".length) {
 					folders.add(parent);
 					parent = parent.slice(0, parent.lastIndexOf("/"));
 				}
 			}
-			if (files.length > 0) folders.add("_fit");
+			if (selected.length > 0) folders.add("_fit");
 			for (const folder of Array.from(folders).sort((a, b) => b.length - a.length)) {
 				try { await this.fit.localVault.vault.adapter.rmdir(folder, false); }
 				catch (error) {

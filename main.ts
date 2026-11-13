@@ -549,11 +549,11 @@ export default class FitPlugin extends Plugin {
 		}
 		const confirmed = await new ConflictPreviewModal(this.app, files, options.scope).show();
 		if (confirmed === null) return;
-		if (files.length === 0) {
-			new Notice('没有需要删除的冲突副本。');
+		if (confirmed.selected.length === 0) {
+			new Notice('未勾选任何副本，未删除任何文件。');
 			return;
 		}
-		const result = await this.directionalRunner.cleanupConflicts(options.scope);
+		const result = await this.directionalRunner.cleanupConflicts(options.scope, confirmed.selected);
 		if (result.failed.length > 0) {
 			const failedList = result.failed.map(entry => `${entry.path}: ${entry.error}`).join('\n');
 			new Notice(`冲突清理完成，但有 ${result.failed.length} 项失败：\n${failedList}`);

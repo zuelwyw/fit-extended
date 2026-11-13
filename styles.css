@@ -552,3 +552,45 @@
 	border-radius: 6px;
 	background: rgba(249, 180, 52, 0.25);
 }
+
+/* 冲突副本对照条目 */
+.fit-operation-conflict-item {
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: 8px 2px;
+}
+
+.fit-operation-conflict-item:last-child {
+	border-bottom: none;
+}
+
+.fit-operation-conflict-check {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.85em;
+	cursor: pointer;
+	margin-bottom: 4px;
+}
+
+.fit-operation-conflict-check input[type="checkbox"] {
+	accent-color: var(--interactive-accent);
+}
+
+.fit-operation-conflict-info code {
+	word-break: break-all;
+}
+
+.fit-operation-conflict-meta {
+	font-size: 0.8em;
+	color: var(--text-muted);
+	margin-top: 2px;
+}
+
+.fit-operation-conflict-hint {
+	font-size: 0.8em;
+	color: var(--text-normal);
+	background: var(--background-secondary);
+	border-radius: 4px;
+	padding: 3px 8px;
+	margin-top: 4px;
+}

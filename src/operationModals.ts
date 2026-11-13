@@ -1,5 +1,5 @@
 import { App, Modal, Setting } from "obsidian";
-import { DirectionalPlan, DirectionalWriteMode, SyncDirection } from "./directionalOperations";
+import { ConflictPair, DirectionalPlan, DirectionalWriteMode, SyncDirection } from "./directionalOperations";
 import { FileChange } from "./util/changeTracking";
 
 abstract class OptionsModal<T> extends Modal {
@@ -171,26 +171,75 @@ export class PlanPreviewModal extends OptionsModal<DirectionalPlan> {
 	}
 }
 
-export class ConflictPreviewModal extends OptionsModal<{ scope: Scope }> {
-	private selectedScope: Scope;
-	constructor(app: App, files: Array<{ path: string; size: number }>, scope: Scope) {
+function formatTime(epochMs: number): string {
+	const d = new Date(epochMs);
+	const p = (n: number) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * 冲突副本预览：每个副本展示副本与原路径文件的修改时间和大小，
+ * 给出覆盖方向判断参考；删除按勾选逐项进行，原路径正文不在删除范围。
+ */
+export class ConflictPreviewModal extends OptionsModal<{ scope: Scope; selected: string[] }> {
+	private selectedPaths = new Set<string>();
+	private confirmButton: { setDisabled: (b: boolean) => void } | null = null;
+	constructor(app: App, private files: ConflictPair[], private previewScope: Scope) {
 		super(app);
-		this.files = files;
-		this.selectedScope = scope;
 	}
-	private files: Array<{ path: string; size: number }>;
 	onOpen(): void {
-		this.titleEl.setText("确认删除冲突副本");
-		this.contentEl.createEl("p", { text: this.files.length === 0 ? "所选范围内没有冲突副本。" : `将删除以下 ${this.files.length} 个本地文件；原路径正文不在删除范围内。` });
-		if (this.files.length > 0) {
-			const list = this.contentEl.createDiv({ cls: "fit-operation-file-list" });
-			for (const file of this.files) {
-				const row = list.createDiv({ cls: "fit-operation-file fit-operation-REMOVED" });
-				row.createEl("code", { text: file.path });
-				row.createSpan({ text: ` ${file.size} B；原路径：${file.path.slice("_fit/".length)}` });
+		this.titleEl.setText("处理 _fit/ 冲突副本");
+		if (this.files.length === 0) {
+			this.contentEl.createEl("p", { text: "所选范围内没有冲突副本。" });
+			this.addActions("关闭", () => this.finish({ scope: this.previewScope, selected: [] }));
+			return;
+		}
+
+		this.contentEl.createEl("p", { text: "每个副本是冲突时另一端的内容。对照修改时间与大小决定：把副本内容复制回原文件（采用副本），或保留原文件后删除副本。删除只作用于勾选的副本，原路径正文与远端均不受影响。" });
+
+		const list = this.contentEl.createDiv({ cls: "fit-operation-file-list" });
+		for (const file of this.files) {
+			this.selectedPaths.add(file.path);
+			const row = list.createDiv({ cls: "fit-operation-conflict-item" });
+
+			// 勾选：决定是否删除该副本
+			const checkLabel = row.createEl("label", { cls: "fit-operation-conflict-check" });
+			const check = checkLabel.createEl("input", { attr: { type: "checkbox" } });
+			check.checked = true;
+			check.addEventListener("change", () => {
+				if (check.checked) this.selectedPaths.add(file.path);
+				else this.selectedPaths.delete(file.path);
+				this.confirmButton?.setDisabled(this.selectedPaths.size === 0);
+			});
+			checkLabel.createSpan({ text: "删除副本" });
+
+			const info = row.createDiv({ cls: "fit-operation-conflict-info" });
+			info.createEl("code", { text: file.path });
+			info.createDiv({ cls: "fit-operation-conflict-meta", text: `副本：${formatTime(file.mtime)}，${file.size} B` });
+
+			// 原路径对照与覆盖方向参考
+			const orig = info.createDiv({ cls: "fit-operation-conflict-meta" });
+			if (file.originalExists && file.originalMtime !== null && file.originalSize !== null) {
+				orig.setText(`原文件：${formatTime(file.originalMtime)}，${file.originalSize} B`);
+				// 覆盖方向参考：只比较时间与大小，供用户参考，不做决定
+				let hint: string;
+				if (file.mtime > file.originalMtime) {
+					hint = "副本修改时间较新——若远端版本是你要的内容，可把副本复制回原路径覆盖";
+				} else if (file.mtime < file.originalMtime) {
+					hint = "原文件修改时间较新——原文件可能已含合并结果，副本通常可直接删除";
+				} else {
+					hint = "两者修改时间相同——对照内容后自行判断";
+				}
+				info.createDiv({ cls: "fit-operation-conflict-hint", text: hint });
+			} else {
+				orig.setText("原文件已不存在——副本是这份内容的唯一本地残留，删除前请确认不需要");
 			}
 		}
-		this.addActions(this.files.length > 0 ? "确认删除副本" : "关闭", () => this.finish({ scope: this.selectedScope }));
+
+		this.addActions("删除勾选的副本", () => this.finish({ scope: this.previewScope, selected: Array.from(this.selectedPaths) }));
+		// 拿到确认按钮引用以支持空勾选时禁用
+		const buttons = this.modalEl.querySelectorAll("button");
+		buttons.forEach(b => { if (b.textContent === "删除勾选的副本") this.confirmButton = { setDisabled: (d: boolean) => (b.disabled = d) }; });
 	}
 }
 

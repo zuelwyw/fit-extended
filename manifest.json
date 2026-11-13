@@ -4,8 +4,8 @@
 	"version": "1.6.0",
 	"minAppVersion": "1.9.10",
 	"description": "轻量级文件 Git 同步（FIT）：通过 GitHub 在手机与电脑之间同步文件，并新增单向上传、单向拉取与冲突副本清理。",
-	"author": "joshuakto",
-	"authorUrl": "https://github.com/joshuakto",
+	"author": "zuelwyw",
+	"authorUrl": "https://github.com/zuelwyw",
 	"fundingUrl": "https://www.buymeacoffee.com/joshuakto",
 	"isDesktopOnly": false
 }
