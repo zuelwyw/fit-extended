@@ -40,7 +40,7 @@ async function getMasterKey(password: string): Promise<CryptoKey> {
 type CryptoKeyUsage = "encrypt" | "decrypt";
 
 async function deriveKey(usage: CryptoKeyUsage): Promise<CryptoKey> {
-	if (!isEnabled()) throw new Error("The encryption is not enabled so the password is empty.");
+	if (!isEnabled()) throw new Error("加密未启用，密码为空。");
 	const masterKey = await getMasterKey(plugin.settings.encryptionPassword);
 	return crypto.subtle.deriveKey(
 		{

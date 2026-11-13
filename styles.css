@@ -453,3 +453,102 @@
 .restore {
     display: visible;
 }
+
+/* Per-run operation modals (directional sync + conflict cleanup) */
+.fit-operation-modal .modal-content {
+	padding: 12px 16px 16px;
+}
+
+.fit-operation-choices {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	margin: 8px 0 12px;
+	padding: 4px 8px;
+}
+
+.fit-operation-choice {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	padding: 8px 4px;
+	border-top: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+}
+
+.fit-operation-choice:first-child {
+	border-top: none;
+}
+
+.fit-operation-choice input[type="radio"] {
+	margin-top: 2px;
+	accent-color: var(--interactive-accent);
+}
+
+.fit-operation-choice-copy strong {
+	display: block;
+}
+
+.fit-operation-choice-copy div {
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.fit-operation-change-group {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	margin: 8px 0;
+}
+
+.fit-operation-change-group summary {
+	cursor: pointer;
+	font-weight: 600;
+	padding: 6px 10px;
+}
+
+.fit-operation-file-list {
+	max-height: 200px;
+	overflow: auto;
+	padding: 4px 10px 8px;
+	background: var(--background-secondary-alt);
+	border-radius: 0 0 8px 8px;
+}
+
+.fit-operation-file {
+	display: block;
+	padding: 1px 2px;
+	border-radius: 4px;
+	margin: 2px 0;
+	word-break: break-all;
+}
+
+.fit-operation-ADDED {
+	background-color: rgba(144, 238, 144, 0.4);
+}
+
+.fit-operation-MODIFIED {
+	background-color: rgba(249, 180, 52, 0.4);
+}
+
+.fit-operation-REMOVED {
+	background-color: rgba(255, 99, 71, 0.3);
+}
+
+/* 操作对话框内的分组小标题 */
+.fit-operation-choice-name {
+	font-weight: 600;
+	font-size: 0.9em;
+	margin: 14px 0 2px;
+	color: var(--text-normal);
+}
+
+/* 预览对话框的汇总与警示 */
+.fit-operation-summary {
+	font-size: 0.9em;
+	color: var(--text-muted);
+}
+.fit-operation-warning {
+	font-size: 0.9em;
+	padding: 6px 10px;
+	border-radius: 6px;
+	background: rgba(249, 180, 52, 0.25);
+}

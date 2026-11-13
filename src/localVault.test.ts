@@ -486,7 +486,7 @@ describe('LocalVault', () => {
 					[{ path: '_fit/.obsidian/workspace.json', content: FileContent.fromPlainText('{}') }],
 					[]
 				)
-			).rejects.toThrow(/file already exists at this path/);
+			).rejects.toThrow(/已存在同名文件/);
 		});
 
 		it('should succeed when parent folder already exists as a folder (issue #153)', async () => {
@@ -726,8 +726,8 @@ describe('LocalVault', () => {
 
 			// Should return user warning
 			expect(result.userWarning).toBeDefined();
-			expect(result.userWarning).toContain('⚠️ Encoding Issue Detected');
-			expect(result.userWarning).toContain('Suspicious filename patterns');
+			expect(result.userWarning).toContain('⚠️ 检测到编码问题');
+			expect(result.userWarning).toContain('同步时发现可疑文件名模式');
 		});
 
 		it('should NOT warn for legitimate CJK filenames without ASCII sandwich', async () => {
@@ -765,7 +765,7 @@ describe('LocalVault', () => {
 
 			// Should detect all 3 corruptions
 			expect(result.userWarning).toBeDefined();
-			expect(result.userWarning).toContain('⚠️ Encoding Issue Detected');
+			expect(result.userWarning).toContain('⚠️ 检测到编码问题');
 		});
 
 		it('should NOT warn when file already exists locally', async () => {

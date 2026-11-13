@@ -66,6 +66,18 @@ export class FakeObsidianVault {
 	private filesOnDisk = new Map<string, ArrayBuffer>(); // path -> binary content
 	private vaultIndex = new Set<string>(); // Paths in vault index (non-hidden)
 
+	/** List all paths currently stored (test assertions). */
+	listPaths(): string[] {
+		return Array.from(this.filesOnDisk.keys());
+	}
+
+	/** Read a stored file as text (test assertions). */
+	readText(path: string): string | undefined {
+		const content = this.filesOnDisk.get(path);
+		if (!content) return undefined;
+		return new TextDecoder('utf-8', { fatal: true }).decode(content);
+	}
+
 	getAbstractFileByPath(path: string) {
 		// Simulate: vault index never returns hidden files
 		if (path.startsWith('.') || !this.vaultIndex.has(path)) return null;
@@ -106,6 +118,9 @@ export class FakeObsidianVault {
 		},
 		remove: async (path: string) => {
 			this.filesOnDisk.delete(path);
+		},
+		rmdir: async (path: string, _recursive: boolean) => {
+			// Folders are implicit in this fake; removing is a no-op that always succeeds
 		}
 	};
 
@@ -776,8 +791,9 @@ export class FakeRemoteVault implements IVault<"remote"> {
 
 	/**
 	 * Set file content directly (for test setup).
+	 * Optionally advances the commit SHA to simulate another device committing.
 	 */
-	async setFile(path: string, content: string | FileContent): Promise<void> {
+	async setFile(path: string, content: string | FileContent, advanceCommit = false): Promise<void> {
 		let fileContent;
 		if (content instanceof FileContent) {
 			fileContent = content;
@@ -788,6 +804,13 @@ export class FakeRemoteVault implements IVault<"remote"> {
 		// Store blob SHA -> content mapping for readFileContent
 		const sha = await computeSha1(path + fileContent.toBase64()) as BlobSha;
 		this.blobShas.set(sha, fileContent.toBase64());
+		if (advanceCommit) {
+			this.commitSha = await computeSha1(
+				Array.from(this.files.entries())
+					.map(([p, c]) => `${p}:${c.toBase64()}`)
+					.join('\n')
+			) as CommitSha;
+		}
 	}
 
 	/**

@@ -65,12 +65,12 @@ export default class FitSettingTab extends PluginSettingTab {
 
 		if (this.ownerInputComponent) {
 			this.ownerInputComponent.setPlaceholder(
-				isAuthenticated ? 'owner-username' : 'Authenticate above to auto-fill'
+				isAuthenticated ? '所有者用户名' : '在上方验证后自动填充'
 			);
 		}
 		if (this.repoInputComponent) {
 			this.repoInputComponent.setPlaceholder(
-				isAuthenticated ? 'repo-name' : 'Authenticate above for suggestions'
+				isAuthenticated ? '仓库名称' : '在上方验证后获取建议'
 			);
 		}
 	}
@@ -89,7 +89,7 @@ export default class FitSettingTab extends PluginSettingTab {
 		this.authUserAvatar.removeClass('cat');
 		this.authUserAvatar.removeClass('error');
 		this.authUserAvatar.addClass('empty');
-		this.authUserHandle.setText("Unauthenticated");
+		this.authUserHandle.setText("未验证");
 
 		// Don't clear input values - user's settings remain intact
 		// They can still see what owner/repo/branch they had configured
@@ -195,7 +195,7 @@ export default class FitSettingTab extends PluginSettingTab {
 				this.plugin.logger.log('[FitSettings] Cannot authenticate without PAT token');
 				this.authUserAvatar.removeClass('cat');
 				this.authUserAvatar.addClass('error');
-				this.authUserHandle.setText('Enter PAT token above');
+				this.authUserHandle.setText('请在上方填入 PAT 令牌');
 				return;
 			}
 			const {owner: authUser, avatarUrl} = await this.plugin.githubConnection.getAuthenticatedUser();
@@ -204,7 +204,7 @@ export default class FitSettingTab extends PluginSettingTab {
 
 			// Detect if authUser changed by checking the displayed handle
 			const previousAuthUser = this.authUserHandle.textContent;
-			const authUserChanged = previousAuthUser !== "Unauthenticated" && previousAuthUser !== authUser;
+			const authUserChanged = previousAuthUser !== "未验证" && previousAuthUser !== authUser;
 			this.authUserHandle.setText(authUser);
 
 			const previousOwner = this.plugin.settings.owner;
@@ -240,12 +240,12 @@ export default class FitSettingTab extends PluginSettingTab {
 			this.authUserAvatar.addClass('error');
 
 			// Provide specific error message based on error type
-			let errorMessage = "Authentication failed, make sure your token has not expired.";
+			let errorMessage = "验证失败，请确认令牌未过期。";
 			if (error instanceof Error) {
 				if (error.message.includes("network") || error.message.includes("reach")) {
-					errorMessage = "Network error. Check your connection and try again.";
+					errorMessage = "网络错误，请检查网络后重试。";
 				} else if (error.message.includes("Authentication") || error.message.includes("401") || error.message.includes("403")) {
-					errorMessage = "Authentication failed. Check your PAT token.";
+					errorMessage = "验证失败，请检查 PAT 令牌。";
 				}
 			}
 
@@ -267,12 +267,12 @@ export default class FitSettingTab extends PluginSettingTab {
 	githubUserInfoBlock = () => {
 		const {containerEl} = this;
 		new Setting(containerEl).setHeading()
-			.setName("GitHub user info")
+			.setName("GitHub 用户信息")
 			.addButton(button => {
 				this.authenticateButtonComponent = button;
 				button
 					.setCta()
-					.setButtonText("Authenticate user")
+					.setButtonText("验证用户")
 					.setDisabled(this.authenticating || !this.plugin.githubConnection)
 					.onClick(async ()=>{
 						if (this.authenticating) return;
@@ -280,17 +280,17 @@ export default class FitSettingTab extends PluginSettingTab {
 					});
 			});
 		this.authUserSetting = new Setting(containerEl)
-			.setDesc("Input your personal access token below to get authenticated. Create a GitHub account here if you don't have one yet.")
+			.setDesc("在下方填入个人访问令牌以完成验证。若还没有 GitHub 账号，可在此注册。")
 			.addExtraButton(button=>button
 				.setIcon('github')
-				.setTooltip("Sign up on github.com")
+				.setTooltip("在 github.com 注册")
 				.onClick(async ()=>{
 					window.open("https://github.com/signup", "_blank");
 				}));
 		this.authUserSetting.nameEl.addClass('fit-avatar-container');
 		this.authUserAvatar = this.authUserSetting.nameEl.createDiv({cls: 'fit-avatar-container empty'});
 		this.authUserHandle = this.authUserSetting.nameEl.createEl('span', {cls: 'fit-github-handle'});
-		this.authUserHandle.setText("Unauthenticated");
+		this.authUserHandle.setText("未验证");
 
 		// Try to get authenticated user info from GitHubConnection (cached)
 		if (this.plugin.githubConnection) {
@@ -307,10 +307,10 @@ export default class FitSettingTab extends PluginSettingTab {
 		this.authUserSetting.controlEl.addClass('fit-avatar-display-text');
 
 		this.patSetting = new Setting(containerEl)
-			.setName('Github personal access token')
-			.setDesc('Make sure Permissions has Contents: "Read and write". Recommended: Limit to selected repository, adjust expiration.')
+			.setName('GitHub 个人访问令牌')
+			.setDesc('请确保权限包含 Contents: "Read and write"。建议：限定到所选仓库，并设置过期时间。')
 			.addText(text => text
-				.setPlaceholder('GitHub personal access token')
+				.setPlaceholder('GitHub 个人访问令牌')
 				.setValue(this.plugin.settings.pat)
 				.onChange(async (value) => {
 					const hadPat = !!this.plugin.settings.pat;
@@ -342,7 +342,7 @@ export default class FitSettingTab extends PluginSettingTab {
 				}))
 			.addExtraButton(button=>button
 				.setIcon('external-link')
-				.setTooltip("Create a token")
+				.setTooltip("创建令牌")
 				.onClick(async ()=>{
 					window.open(
 						"https://github.com/settings/personal-access-tokens/new?name=Obsidian%20FIT&description=Obsidian%20FIT%20plugin&contents=write",
@@ -353,14 +353,14 @@ export default class FitSettingTab extends PluginSettingTab {
 	repoInfoBlock = async () => {
 		const {containerEl} = this;
 		const isAuthenticated = !!this.plugin.githubConnection;
-		new Setting(containerEl).setHeading().setName("Repository info")
+		new Setting(containerEl).setHeading().setName("仓库信息")
 			.setDesc(isAuthenticated
-				? "Suggestions populate automatically when authenticated. Click refresh to update the lists."
-				: "Authenticate above to populate owner/repo suggestions, or type custom values manually.")
+				? "验证后会自动填充建议。点击刷新可更新列表。"
+				: "在上方验证后可获取所有者/仓库建议，也可手动填写。")
 			.addExtraButton(button => {
 				this.refreshButton = button.extraSettingsEl;
 				button
-					.setTooltip("Refresh repos and branches list")
+					.setTooltip("刷新仓库与分支列表")
 					.setDisabled(!isAuthenticated)
 					.setIcon('refresh-cw')
 					.onClick(async () => {
@@ -369,25 +369,25 @@ export default class FitSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setDesc("Make sure you are logged in to github on your browser.")
+			.setDesc("请确保已在浏览器中登录 GitHub。")
 			.addExtraButton(button => button
 				.setIcon('github')
-				.setTooltip("Create a new repository")
+				.setTooltip("新建仓库")
 				.onClick(() => {
 					window.open(`https://github.com/new`, '_blank');
 				}));
 
 		// Repository owner combo box (supports both dropdown suggestions and freeform text)
 		this.ownerSetting = new Setting(containerEl)
-			.setName('Repository owner')
+			.setName('仓库所有者')
 			.setDesc(isAuthenticated
-				? 'The GitHub username or organization that owns the repository. Select from suggestions or type a custom value.'
-				: 'Type a custom value, or authenticate above to see suggestions.');
+				? '拥有该仓库的 GitHub 用户名或组织。可从建议中选择，也可自定义填写。'
+				: '手动填写，或在上方验证后查看建议。');
 
 		// Create AbstractInputSuggest for owner suggestions (better mobile UX than datalist)
 		this.ownerSetting.addText(text => {
 			this.ownerInputComponent = text;
-			text.setPlaceholder(isAuthenticated ? 'owner-username' : 'Authenticate above to auto-fill')
+			text.setPlaceholder(isAuthenticated ? '所有者用户名' : '在上方验证后自动填充')
 				.setValue(this.plugin.settings.owner)
 				.onChange(async (value) => {
 					const ownerChanged = value !== this.plugin.settings.owner;
@@ -433,15 +433,15 @@ export default class FitSettingTab extends PluginSettingTab {
 
 		// Repository name combo box (supports both dropdown suggestions and freeform text)
 		this.repoSetting = new Setting(containerEl)
-			.setName('Repository name')
+			.setName('仓库名称')
 			.setDesc(isAuthenticated
-				? 'Select a repo to sync your vault or type a custom value. Refresh to see your latest repos.'
-				: 'Authenticate above to see repo suggestions, or type a custom value.');
+				? '选择用于同步的仓库，或自定义填写。刷新可查看最新仓库。'
+				: '在上方验证后查看仓库建议，或自定义填写。');
 
 		// Create AbstractInputSuggest for repo suggestions (better mobile UX than datalist)
 		this.repoSetting.addText(text => {
 			this.repoInputComponent = text;
-			text.setPlaceholder(isAuthenticated ? 'repo-name' : 'Authenticate above for suggestions')
+			text.setPlaceholder(isAuthenticated ? '仓库名称' : '在上方验证后获取建议')
 				.setValue(this.plugin.settings.repo)
 				.onChange((value) => {
 					this.plugin.settings.repo = value;
@@ -467,8 +467,8 @@ export default class FitSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName('Branch name')
-			.setDesc('Enter repository details above, then refresh to view existing branches.')
+			.setName('分支名称')
+			.setDesc('先填写上方仓库信息，再刷新以查看现有分支。')
 			.addDropdown(dropdown => {
 				dropdown.selectEl.addClass('branch-dropdown');
 				dropdown.setDisabled(this.existingBranches.length === 0);
@@ -486,11 +486,11 @@ export default class FitSettingTab extends PluginSettingTab {
 
 		this.repoLink = this.getLatestLink();
 		const linkDisplay = new Setting(containerEl)
-			.setName("View your vault on GitHub")
+			.setName("在 GitHub 上查看你的库")
 			.setDesc(this.repoLink)
 			.addExtraButton(button => button
 				.setDisabled(this.repoLink.length === 0)
-				.setTooltip("Open on GitHub")
+				.setTooltip("在 GitHub 打开")
 				.setIcon('external-link')
 				.onClick(() => {
 					console.log(`opening ${this.repoLink}`);
@@ -516,18 +516,18 @@ export default class FitSettingTab extends PluginSettingTab {
 		}
 
 		const setting = new Setting(containerEl)
-			.setName("Encryption password (Advanced only)")
+			.setName("加密密码（仅高级）")
 			.setDesc(
-				"⚠️ A password for encrypting your remote data. Leave empty to disable encryption.\n\n" +
-				"Safe migration guide (read before changing):\n" +
-				"1. Ensure all your devices have the same files in their vaults;\n" +
-				"2. Configure and apply this setting the same way on all devices;\n" +
-				"3. On one device, delete all remote files by clicking 'Clear repository' button and sync your vault with the repository;\n" +
-				"4. On every other device, update the cache by clicking 'Sync local cache' button;\n" +
-				"5. Done. Only after this can you modify the files in your vaults and sync normally."
+				"⚠️ 用于加密远端数据的密码。留空即关闭加密。\n\n" +
+				"安全迁移步骤（改动前请先阅读）：\n" +
+				"1. 确认所有设备的库中文件一致；\n" +
+				"2. 在所有设备上以相同方式配置并应用此项；\n" +
+				"3. 在其中一台设备上点击「清空仓库」删除全部远端文件，再与仓库同步；\n" +
+				"4. 在其余每台设备上点击「同步本地缓存」更新缓存；\n" +
+				"5. 完成。此后才能修改库中文件并正常同步。"
 			)
 			.addText(text => {
-				text.setPlaceholder("Password");
+				text.setPlaceholder("密码");
 				text.setValue(this.plugin.settings.encryptionPassword);
 				text.inputEl.type = defaultType;
 				textComponent = text;
@@ -537,7 +537,7 @@ export default class FitSettingTab extends PluginSettingTab {
 
 		setting.addExtraButton(button => button
 			.setIcon("eye")
-			.setTooltip("Switch visibility")
+			.setTooltip("切换可见性")
 			.onClick(() => {
 				visible = !visible;
 				textComponent.inputEl.type = visible ? "text" : "password";
@@ -546,7 +546,7 @@ export default class FitSettingTab extends PluginSettingTab {
 
 		setting.addExtraButton(button => button
 			.setIcon("arrow-right")
-			.setTooltip("Apply password")
+			.setTooltip("应用密码")
 			.onClick(async () => {
 				const value = textComponent.getValue();
 				this.plugin.settings.encryptionPassword = value;
@@ -556,15 +556,15 @@ export default class FitSettingTab extends PluginSettingTab {
 				new FitNotice(
 					this.plugin.fit,
 					["done"],
-					"Password has been applied",
+					"密码已应用",
 					5000,
 					false
 				);
 			}));
 
 		new Setting(containerEl)
-			.setName('Sync local cache')
-			.setDesc('Re-read remote state into local cache. (Advanced use only — encryption migration or cache recovery)')
+			.setName('同步本地缓存')
+			.setDesc('将远端状态重新读入本地缓存。（仅高级用途：加密迁移或缓存恢复）')
 			.addExtraButton(button => button
 				.setIcon('refresh-cw')
 				.setTooltip("Sync local cache")
@@ -574,7 +574,7 @@ export default class FitSettingTab extends PluginSettingTab {
 					const notice = new FitNotice(
 						this.plugin.fit,
 						["done"],
-						"Updating cache...",
+						"正在更新缓存……",
 						5000,
 						false
 					);
@@ -586,10 +586,10 @@ export default class FitSettingTab extends PluginSettingTab {
 							lastFetchedRemoteSha: state,
 						});
 
-						message(notice, "Cache has been updated");
+						message(notice, "缓存已更新");
 						notice.remove("done", 5000);
 					} catch (e) {
-						message(notice, "Failed to update cache", e);
+						message(notice, "更新缓存失败", e);
 						notice.remove("error", 5000);
 					} finally {
 						button.setDisabled(false);
@@ -597,8 +597,8 @@ export default class FitSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Clear repository')
-			.setDesc('Delete all files from the repository. Previous commits unaffected. (Advanced use only — encryption migration)')
+			.setName('清空仓库')
+			.setDesc('删除仓库中的全部文件，历史提交不受影响。（仅高级用途：加密迁移）')
 			.addExtraButton(button => button
 				.setIcon('trash-2')
 				.setTooltip("Clear repository")
@@ -608,17 +608,17 @@ export default class FitSettingTab extends PluginSettingTab {
 					const notice = new FitNotice(
 						this.plugin.fit,
 						["loading"],
-						"Clearing repository...",
+						"正在清空仓库……",
 						undefined,
 						false
 					);
 
 					try {
 						const applied = await this.plugin.fitSync.clear();
-						message(notice, applied ? "Repository has been cleared" : "Nothing to clear");
+						message(notice, applied ? "仓库已清空" : "没有可清空的内容");
 						notice.remove("done", 5000);
 					} catch (e) {
-						message(notice, "Failed to clear repository", e);
+						message(notice, "清空仓库失败", e);
 						notice.remove("error", 5000);
 					} finally {
 						button.setDisabled(false);
@@ -628,12 +628,12 @@ export default class FitSettingTab extends PluginSettingTab {
 
 	localConfigBlock = () => {
 		const {containerEl} = this;
-		new Setting(containerEl).setHeading().setName("Local configurations");
+		new Setting(containerEl).setHeading().setName("本地配置");
 		new Setting(containerEl)
-			.setName('Device name')
-			.setDesc('Sign commit message with this device name.')
+			.setName('设备名称')
+			.setDesc('用此设备名称签署提交信息。')
 			.addText(text => text
-				.setPlaceholder('Device name')
+				.setPlaceholder('设备名称')
 				.setValue(this.plugin.settings.deviceName)
 				.onChange(async (value) => {
 					this.plugin.settings.deviceName = value;
@@ -642,14 +642,14 @@ export default class FitSettingTab extends PluginSettingTab {
 
 
 		new Setting(containerEl)
-			.setName("Auto sync")
-			.setDesc(`Automatically sync your vault when remote has updates. (Muted: sync in the background without displaying notices, except for file changes and conflicts notice)`)
+			.setName("自动同步")
+			.setDesc(`远端有更新时自动同步你的库。（静默：后台同步不显示通知，但文件变更与冲突通知除外）`)
 			.addDropdown(dropdown => {
 				dropdown
-					.addOption('off', 'Off')
-					.addOption('muted', 'Muted')
-					.addOption('remind', 'Remind only')
-					.addOption('on', 'On')
+					.addOption('off', '关闭')
+					.addOption('muted', '静默')
+					.addOption('remind', '仅提醒')
+					.addOption('on', '开启')
 					.setValue(this.plugin.settings.autoSync ? this.plugin.settings.autoSync : 'off')
 					.onChange(async (value) => {
 						this.plugin.settings.autoSync = value as "off" | "muted" | "remind" | "on";
@@ -660,8 +660,8 @@ export default class FitSettingTab extends PluginSettingTab {
 			});
 
 		const checkIntervalSlider = new Setting(containerEl)
-			.setName('Auto check interval')
-			.setDesc(`Automatically check for remote changes in the background every ${this.plugin.settings.checkEveryXMinutes} minutes.`)
+			.setName('自动检查间隔')
+			.setDesc(`每 ${this.plugin.settings.checkEveryXMinutes} 分钟在后台自动检查远端变更。`)
 			.addSlider(slider => slider
 				.setLimits(1, 60, 1)
 				.setValue(this.plugin.settings.checkEveryXMinutes)
@@ -669,7 +669,7 @@ export default class FitSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.checkEveryXMinutes = value;
 					await this.plugin.saveSettings();
-					checkIntervalSlider.setDesc(`Automatically check for remote changes in the background every ${value} minutes.`);
+					checkIntervalSlider.setDesc(`每 ${value} 分钟在后台自动检查远端变更。`);
 				})
 			);
 
@@ -681,7 +681,7 @@ export default class FitSettingTab extends PluginSettingTab {
 	noticeConfigBlock = () => {
 		const {containerEl} = this;
 		const groupEl = containerEl.createDiv({cls: "fit-notice-group"});
-		groupEl.createDiv({text: "Notice display", cls: "fit-notice-group-heading"});
+		groupEl.createDiv({text: "通知显示", cls: "fit-notice-group-heading"});
 
 		const makeItem = (
 			name: string,
@@ -700,14 +700,14 @@ export default class FitSettingTab extends PluginSettingTab {
 			showInput.type = "radio";
 			showInput.name = groupName;
 			showInput.checked = getValue();
-			showLabel.createSpan({text: "Show notice"});
+			showLabel.createSpan({text: "显示通知"});
 
 			const hideLabel = radioRow.createEl("label", {cls: "fit-notice-radio-option"});
 			const hideInput = hideLabel.createEl("input");
 			hideInput.type = "radio";
 			hideInput.name = groupName;
 			hideInput.checked = !getValue();
-			hideLabel.createSpan({text: "Don't show"});
+			hideLabel.createSpan({text: "不显示"});
 
 			const previewEl = item.createDiv({cls: "fit-notice-preview-content"});
 			if (getValue()) {
@@ -729,39 +729,39 @@ export default class FitSettingTab extends PluginSettingTab {
 		};
 
 		makeItem(
-			"File changes",
+			"文件变更",
 			() => this.plugin.settings.notifyChanges,
 			async (v) => { this.plugin.settings.notifyChanges = v; await this.plugin.saveSettings(); },
 			(el) => {
-				el.createDiv({text: "Remote changes", cls: "file-changes-heading"});
-				el.createDiv({text: "Added", cls: "file-changes-subheading"});
-				el.createEl("li", {text: "notes/example.md", cls: "file-update-row file-ADDED"});
-				el.createDiv({text: "Modified", cls: "file-changes-subheading"});
-				el.createEl("li", {text: "journal/today.md", cls: "file-update-row file-MODIFIED"});
+				el.createDiv({text: "远端变更", cls: "file-changes-heading"});
+				el.createDiv({text: "新增", cls: "file-changes-subheading"});
+				el.createEl("li", {text: "笔记/示例.md", cls: "file-update-row file-ADDED"});
+				el.createDiv({text: "修改", cls: "file-changes-subheading"});
+				el.createEl("li", {text: "日记/今天.md", cls: "file-update-row file-MODIFIED"});
 			}
 		);
 
 		makeItem(
-			"Change conflicts",
+			"变更冲突",
 			() => this.plugin.settings.notifyConflicts,
 			async (v) => { this.plugin.settings.notifyConflicts = v; await this.plugin.saveSettings(); },
 			(el) => {
-				el.createDiv({text: "Change conflicts:", cls: "file-changes-subheading"});
+				el.createDiv({text: "变更冲突：", cls: "file-changes-subheading"});
 				const headerRow = el.createDiv({cls: "file-conflict-row"});
-				headerRow.createDiv().setText("Local");
+				headerRow.createDiv().setText("本地");
 				headerRow.createDiv();
-				headerRow.createDiv().setText("Remote");
+				headerRow.createDiv().setText("远端");
 				const row = el.createDiv({cls: "file-conflict-row"});
 				row.createDiv({cls: "file-conflict-change"});
-				row.createDiv().setText("ideas/meeting-notes.md");
+				row.createDiv().setText("想法/会议记录.md");
 				row.createDiv({cls: "file-conflict-delete"});
 			}
 		);
 
 		// Debug logging setting
 		new Setting(containerEl)
-			.setName("Enable debug logging")
-			.setDesc(`Write detailed sync logs to ${this.plugin.manifest.dir}/debug.log. Useful for troubleshooting and bug reports.`)
+			.setName("启用调试日志")
+			.setDesc(`将详细同步日志写入 ${this.plugin.manifest.dir}/debug.log，便于排查问题与提交缺陷报告。`)
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.enableDebugLogging)
 				.onChange(async (value) => {
@@ -905,11 +905,43 @@ export default class FitSettingTab extends PluginSettingTab {
 	};
 
 
+	/**
+	 * Settings block with per-run operation buttons. Every button opens the same
+	 * option modal as its command palette counterpart; no choices are persisted.
+	 */
+	syncActionsBlock(): void {
+		const { containerEl } = this;
+		new Setting(containerEl).setHeading().setName("同步操作");
+		const run = (action: () => Promise<void>) => async () => {
+			try { await action(); } catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this.plugin.logger.log(`[FitSettings] Operation failed: ${message}`, { error });
+			}
+		};
+		new Setting(containerEl)
+			.setName("双向同步")
+			.setDesc("双向同步；可另行选择是否在同步后清理冲突副本（每次操作时选择）。")
+			.addButton(button => button.setCta().setButtonText("同步…").onClick(run(async () => this.plugin.triggerBidirectionalSyncWithOptions())));
+		new Setting(containerEl)
+			.setName("单向上传")
+			.setDesc("把本地新增和修改上传到 GitHub；可选择删除远端独有文件（每次操作时选择）。")
+			.addButton(button => button.setButtonText("上传…").onClick(run(async () => this.plugin.triggerDirectionalUpload())));
+		new Setting(containerEl)
+			.setName("单向拉取")
+			.setDesc("把远端新增和修改下载到本地库；可选择删除本地独有文件（每次操作时选择）。")
+			.addButton(button => button.setButtonText("拉取…").onClick(run(async () => this.plugin.triggerDirectionalPull())));
+		new Setting(containerEl)
+			.setName("清理冲突副本")
+			.setDesc("删除 _fit/ 下的冲突副本；每次可选择范围。原路径文件永不删除。")
+			.addButton(button => button.setButtonText("清理…").onClick(run(async () => this.plugin.triggerConflictCleanup())));
+	}
+
 	async display(): Promise<void> {
 		const {containerEl} = this;
 
 		containerEl.empty();
 
+		this.syncActionsBlock();
 		this.githubUserInfoBlock();
 		this.repoInfoBlock();
 		this.localConfigBlock();

@@ -132,7 +132,7 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 		// No status or no response indicates network/connectivity issue
 		if (errorObj.status === null || errorObj.status === undefined || !errorObj.response) {
 			throw VaultError.network(
-				errorObj.message || "Couldn't reach GitHub API",
+				errorObj.message || "无法连接 GitHub API",
 				{ originalError: error }
 			);
 		}
@@ -156,6 +156,24 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 			}
 
 			throw VaultError.remoteNotFound(detailMessage, { originalError: error });
+		}
+
+		// 403 细分：GitHub 二级限流（内容创建 ≤80/分钟、≤500/小时）不是认证失败，
+		// 误判会误导用户去检查令牌。官方文档要求按 retry-after / x-ratelimit-reset 退避重试。
+		const isRateLimit403 = errorObj.status === 403
+			&& typeof errorObj.message === 'string'
+			&& /rate limit|secondary rate/i.test(errorObj.message);
+		if (isRateLimit403) {
+			const headers = (errorObj as { response?: { headers?: Record<string, unknown> } }).response?.headers ?? {};
+			const retryAfter = Number(headers['retry-after'] ?? 0);
+			const reset = Number(headers['x-ratelimit-reset'] ?? 0);
+			const waitSeconds = retryAfter > 0
+				? retryAfter
+				: reset > 0 ? Math.max(60, reset - Math.floor(Date.now() / 1000)) : 60;
+			throw VaultError.network(
+				`GitHub 二级限流（内容创建请求过多），约 ${waitSeconds} 秒后可重试`,
+				{ originalError: error }
+			);
 		}
 
 		// 401/403: Authentication/authorization failures
@@ -253,8 +271,8 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 				});
 			if (typeof blob.content !== 'string') {
 				throw new Error(
-					`Cannot read '${path}': blob content is ${typeof blob.content} (encoding: '${blob.encoding ?? 'unknown'}'). ` +
-					`GitHub may not support this blob format.`
+					`无法读取「${path}」：blob 内容类型为 ${typeof blob.content}（编码：'${blob.encoding ?? 'unknown'}'). ` +
+					`GitHub 可能不支持该 blob 格式。`
 				);
 			}
 			let content = blob.content;
@@ -274,29 +292,54 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 	/**
 	 * Create a blob on GitHub from content
 	 */
+	private static readonly BLOB_MAX_RETRIES = 3;
+
+	private static sleep(ms: number): Promise<void> {
+		return new Promise(resolve => setTimeout(resolve, ms));
+	}
+
+	/**
+	 * 内容生成请求受 GitHub 二级限流约束（≤80/分钟）。
+	 * 收到限流响应时按 retry-after 指示退避后重试，最多 BLOB_MAX_RETRIES 次。
+	 */
 	private async createBlob(content: string, encoding: string): Promise<BlobSha> {
-		try {
-			if (Encryption.isEnabled()) {
-				if (encoding === "utf-8") {
-					encoding = "base64";
-					content = Content.encodeToBase64(content);
+		for (let attempt = 0; ; attempt++) {
+			try {
+				let payload = content;
+				let payloadEncoding = encoding;
+				if (Encryption.isEnabled()) {
+					if (payloadEncoding === "utf-8") {
+						payloadEncoding = "base64";
+						payload = Content.encodeToBase64(payload);
+					}
+					payload = await Encryption.encryptContent(payload);
 				}
-				content = await Encryption.encryptContent(content);
+				const {data: blob} = await withSlowOperationMonitoring(
+					this.octokit.request(
+						`POST /repos/{owner}/{repo}/git/blobs`, {
+							owner: this.owner,
+							repo: this.repo,
+							content: payload,
+							encoding: payloadEncoding,
+							headers: this.headers
+						}),
+					'GitHub blob creation'
+				);
+				return blob.sha as BlobSha;
+			} catch (error) {
+				const err = error as { status?: number; message?: string };
+				const isRateLimited = err.status === 403
+					&& typeof err.message === 'string'
+					&& /rate limit|secondary rate/i.test(err.message);
+				if (isRateLimited && attempt < RemoteGitHubVault.BLOB_MAX_RETRIES) {
+					// 逐步退避：60s → 120s → 240s，符合官方"指数退避"建议
+					const backoffMs = 60_000 * Math.pow(2, attempt);
+					fitLogger.log(`[RemoteVault] Blob creation rate limited; backing off ${backoffMs / 1000}s (attempt ${attempt + 1}/${RemoteGitHubVault.BLOB_MAX_RETRIES})`);
+					await RemoteGitHubVault.sleep(backoffMs);
+					continue;
+				}
+				return await this.wrapOctokitError(error, 'repo');
 			}
-			const {data: blob} = await withSlowOperationMonitoring(
-				this.octokit.request(
-					`POST /repos/{owner}/{repo}/git/blobs`, {
-						owner: this.owner,
-						repo: this.repo,
-						content,
-						encoding,
-						headers: this.headers
-					}),
-				'GitHub blob creation'
-			);
-			return blob.sha as BlobSha;
-		} catch (error) {
-			return await this.wrapOctokitError(error, 'repo');
 		}
 	}
 
@@ -531,7 +574,8 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 	async applyChanges(
 		filesToWrite: Array<{path: string, content: FileContent}>,
 		filesToDelete: Array<string>,
-		_options?: { clashPaths?: Set<string> }
+		_options?: { clashPaths?: Set<string> },
+		onProgress?: (completed: number, total: number) => void
 	): Promise<ApplyChangesResult<"remote">> {
 		// Note: clashPaths is ignored - remote doesn't have _fit/ directory concept
 		// Get current state using cache when available
@@ -562,8 +606,20 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 			});
 		}
 
-		// Wait for all tree nodes, collecting both successes and failures
-		const results = await Promise.allSettled(operations.map(op => op.promise));
+		// GitHub 二级限流：内容生成请求 ≤80/分钟、≤500/小时。
+		// 这里以约 80/分钟的速率串行推进（每 750ms 一个），避免瞬时并发触发 403。
+		const BLOB_INTERVAL_MS = 750;
+		const results = [];
+		for (let i = 0; i < operations.length; i++) {
+			if (i > 0) {
+				await new Promise(resolve => setTimeout(resolve, BLOB_INTERVAL_MS));
+			}
+			results.push(await operations[i].promise.then(
+				(value: TreeNode | null) => ({ status: 'fulfilled' as const, value }),
+				(reason: unknown) => ({ status: 'rejected' as const, reason })
+			));
+			onProgress?.(i + 1, operations.length);
+		}
 
 		// Extract successful nodes and collect per-file errors
 		const treeNodes: TreeNode[] = [];

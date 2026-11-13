@@ -95,7 +95,7 @@ describe('FitSync', () => {
 		if (!result.success) {
 			// Generate user-friendly message from structured sync error
 			const errorMessage = fitSync.getSyncErrorMessage(result.error);
-			const fullMessage = `Sync failed: ${errorMessage}`;
+			const fullMessage = `同步失败：${errorMessage}`;
 
 			// Show error to user (second param = true means sticky/error state)
 			notice.setMessage(fullMessage, true);
@@ -211,9 +211,9 @@ describe('FitSync', () => {
 		const mockNotice1 = createMockNotice();
 		await syncAndHandleResult(fitSync, mockNotice1);
 		expect(mockNotice1._calls).toEqual([
-			{ method: 'setMessage', args: ['Checking for changes...'] },
+			{ method: 'setMessage', args: ['正在检查变更……'] },
 			{ method: 'setMessage', args: [
-				"Sync failed: Couldn't reach GitHub API. Please check your internet connection.",
+				"同步失败：Couldn't reach GitHub API。请检查网络连接。",
 				true  // isError - sticky/error state
 			]}
 		]);
@@ -235,10 +235,10 @@ describe('FitSync', () => {
 		const mockNotice2 = createMockNotice();
 		const successResult = await syncAndHandleResult(fitSync, mockNotice2);
 		expect(mockNotice2._calls).toEqual([
-			{ method: 'setMessage', args: ['Checking for changes...'] },
-			{ method: 'setMessage', args: ['Uploading local changes'] },
-			{ method: 'setMessage', args: ['Writing remote changes to local'] },
-			{ method: 'setMessage', args: ['Sync successful'] }
+			{ method: 'setMessage', args: ['正在检查变更……'] },
+			{ method: 'setMessage', args: ['正在上传本地变更'] },
+			{ method: 'setMessage', args: ['正在把远端变更写入本地'] },
+			{ method: 'setMessage', args: ['同步成功'] }
 		]);
 
 		// Verify: Both files A and B were synced (both are new vs baseline)
@@ -246,14 +246,15 @@ describe('FitSync', () => {
 			success: true,
 			changeGroups: expect.arrayContaining([
 				{
-					heading: expect.stringContaining('Remote file updates'),
+					heading: expect.stringContaining('远端文件更新'),
 					changes: expect.arrayContaining([
 						expect.objectContaining({ path: 'fileA.md', type: 'ADDED' }),
 						expect.objectContaining({ path: 'fileB.md', type: 'ADDED' })
 					])
 				}
 			]),
-			clash: []
+			clash: [],
+			conflictFiles: []
 		});
 
 		// Verify: LocalStores updated with BOTH files
@@ -307,7 +308,7 @@ describe('FitSync', () => {
 			// Protected/hidden files are now treated as clashes and get appropriate messaging
 			expect(mockNotice._calls).toContainEqual({
 				method: 'setMessage',
-				args: ['Synced with remote, unresolved conflicts written to _fit']
+				args: ['已与远端同步，未解决的冲突已写入 _fit']
 			});
 
 			// Verify: .obsidian/ files saved to _fit/ for safety, normal file pulled directly
@@ -349,7 +350,7 @@ describe('FitSync', () => {
 				success: true,
 				changeGroups: expect.arrayContaining([
 					{
-						heading: expect.stringContaining('Remote file updates'),
+						heading: expect.stringContaining('远端文件更新'),
 						changes: [expect.objectContaining({ path: 'normal.md', type: 'ADDED' })]
 					}
 				])
@@ -374,7 +375,7 @@ describe('FitSync', () => {
 				success: true,
 				changeGroups: expect.arrayContaining([
 					{
-						heading: expect.stringContaining('Local file updates'),
+						heading: expect.stringContaining('本地文件更新'),
 						changes: expect.arrayContaining([
 							expect.objectContaining({ path: '_fit/_fit/remote-conflict.md', type: 'ADDED' }),
 							expect.objectContaining({ path: 'remote-normal.md', type: 'ADDED' })
@@ -385,7 +386,8 @@ describe('FitSync', () => {
 					path: '_fit/remote-conflict.md',
 					localState: 'protected',
 					remoteOp: 'ADDED'
-				}]
+				}],
+				conflictFiles: ['_fit/_fit/remote-conflict.md']
 			});
 
 			// Verify: Final local vault state
@@ -442,7 +444,7 @@ describe('FitSync', () => {
 				success: true,
 				changeGroups: expect.arrayContaining([
 					{
-						heading: expect.stringContaining('Remote file updates'),
+						heading: expect.stringContaining('远端文件更新'),
 						changes: [expect.objectContaining({ path: 'visible.md', type: 'ADDED' })]
 					}
 				])
@@ -466,16 +468,16 @@ describe('FitSync', () => {
 			expect(result2).toEqual(expect.objectContaining({
 				success: true,
 				changeGroups: [
-					{heading: 'Local file updates:', changes: []},
-					{heading: 'Remote file updates:', changes: []}
+					{heading: '本地文件更新：', changes: []},
+					{heading: '远端文件更新：', changes: []}
 				]
 			}));
 
 			// Verify all notice messages (no file changes, just progress and success)
 			expect(mockNotice2._calls).toEqual(expect.arrayContaining([
-				{method: 'setMessage', args: ['Uploading local changes']},
-				{method: 'setMessage', args: ['Writing remote changes to local']},
-				{method: 'setMessage', args: ['Sync successful']}
+				{method: 'setMessage', args: ['正在上传本地变更']},
+				{method: 'setMessage', args: ['正在把远端变更写入本地']},
+				{method: 'setMessage', args: ['同步成功']}
 			]));
 
 			// Verify: Remote still only has visible file
@@ -514,7 +516,7 @@ describe('FitSync', () => {
 			expect(result).toEqual(expect.objectContaining({ success: true }));
 			expect(mockNotice._calls).toContainEqual({
 				method: 'setMessage',
-				args: ['Synced with remote, unresolved conflicts written to _fit']
+				args: ['已与远端同步，未解决的冲突已写入 _fit']
 			});
 
 			// Verify: Local vault wrote as clash
@@ -951,10 +953,10 @@ describe('FitSync', () => {
 
 			// === VERIFY: All notice messages (progress + conflict detection + status) ===
 			expect(mockNotice._calls).toEqual([
-				{method: 'setMessage', args: ['Checking for changes...']},
-				{method: 'setMessage', args: ['Uploading local changes']},
-				{method: 'setMessage', args: ['Change conflicts detected']},
-				{method: 'setMessage', args: ['Synced with remote, unresolved conflicts written to _fit']}
+				{method: 'setMessage', args: ['正在检查变更……']},
+				{method: 'setMessage', args: ['正在上传本地变更']},
+				{method: 'setMessage', args: ['检测到变更冲突']},
+				{method: 'setMessage', args: ['已与远端同步，未解决的冲突已写入 _fit']}
 			]);
 		});
 
@@ -1039,10 +1041,10 @@ describe('FitSync', () => {
 
 			// === VERIFY: All notice messages (progress + conflict detection + status) ===
 			expect(mockNotice._calls).toEqual([
-				{method: 'setMessage', args: ['Checking for changes...']},
-				{method: 'setMessage', args: ['Uploading local changes']},
-				{method: 'setMessage', args: ['Change conflicts detected']},
-				{method: 'setMessage', args: ['Synced with remote, unresolved conflicts written to _fit']}
+				{method: 'setMessage', args: ['正在检查变更……']},
+				{method: 'setMessage', args: ['正在上传本地变更']},
+				{method: 'setMessage', args: ['检测到变更冲突']},
+				{method: 'setMessage', args: ['已与远端同步，未解决的冲突已写入 _fit']}
 			]);
 		});
 
@@ -1169,9 +1171,9 @@ describe('FitSync', () => {
 
 			// Assert - Verify user-friendly error message
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{ method: 'setMessage', args: [
-					"Sync failed: Couldn't reach GitHub API. Please check your internet connection.",
+					"同步失败：Couldn't reach GitHub API。请检查网络连接。",
 					true
 				]}
 			]);
@@ -1195,9 +1197,9 @@ describe('FitSync', () => {
 
 			// Assert - Verify user-friendly error message
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{ method: 'setMessage', args: [
-					"Sync failed: Bad credentials. Check your GitHub personal access token.",
+					"同步失败：Bad credentials。请检查 GitHub 个人访问令牌。",
 					true
 				]}
 			]);
@@ -1217,9 +1219,9 @@ describe('FitSync', () => {
 
 			// Assert - Verify user-friendly error message
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{ method: 'setMessage', args: [
-					"Sync failed: Repository 'owner/repo' not found. Check your repo and branch settings.",
+					"同步失败：Repository 'owner/repo' not found。请检查仓库与分支设置。",
 					true
 				]}
 			]);
@@ -1241,9 +1243,9 @@ describe('FitSync', () => {
 
 			// Assert - Verify user-friendly error message
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{ method: 'setMessage', args: [
-					"Sync failed: File system error: EACCES: permission denied, write 'test.md'",
+					"同步失败：文件系统错误：EACCES: permission denied, write 'test.md'",
 					true
 				]}
 			]);
@@ -1276,7 +1278,7 @@ describe('FitSync', () => {
 				success: false,
 				error: {
 					type: 'already-syncing',
-					detailMessage: 'Sync already in progress',
+					detailMessage: '同步正在进行中',
 				},
 			});
 
@@ -1310,10 +1312,10 @@ describe('FitSync', () => {
 
 			// Assert - Verify error message includes failed file paths
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{
 					method: 'setMessage', args: [
-						expect.stringMatching(/^Sync failed:.*Failed to read 2 file\(s\) from local vault[\s\S]*(bad-file\.md[\s\S]*another-bad\.md|another-bad\.md[\s\S]*bad-file\.md)/),
+						expect.stringMatching(/^同步失败：.*Failed to read 2 file\(s\) from local vault[\s\S]*(bad-file\.md[\s\S]*another-bad\.md|another-bad\.md[\s\S]*bad-file\.md)/),
 						true]
 				}
 			]);
@@ -1345,12 +1347,12 @@ describe('FitSync', () => {
 
 			// Assert - Verify error message shows which file failed to write (both files should be mentioned)
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
-				{ method: 'setMessage', args: ['Uploading local changes'] },
-				{ method: 'setMessage', args: ['Writing remote changes to local'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
+				{ method: 'setMessage', args: ['正在上传本地变更'] },
+				{ method: 'setMessage', args: ['正在把远端变更写入本地'] },
 				{
 					method: 'setMessage', args: [
-						expect.stringMatching(/Sync failed:[\s\S]*(readonly-file\.md[\s\S]*another-readonly\.md|another-readonly\.md[\s\S]*readonly-file\.md)/),
+						expect.stringMatching(/同步失败：[\s\S]*(readonly-file\.md[\s\S]*another-readonly\.md|another-readonly\.md[\s\S]*readonly-file\.md)/),
 						true]
 				}
 			]);
@@ -1374,16 +1376,16 @@ describe('FitSync', () => {
 			// Assert - Verify error message includes the file path context
 			// Note: Remote write fails fast before "Uploading local changes" message
 			expect(mockNotice._calls).toEqual([
-				{ method: 'setMessage', args: ['Checking for changes...'] },
+				{ method: 'setMessage', args: ['正在检查变更……'] },
 				{
 					method: 'setMessage', args: [
-						expect.stringMatching(/Sync failed:.*file-to-push\.md/),
+						expect.stringMatching(/同步失败：.*file-to-push\.md/),
 						true]
 				}
 			]);
 		});
 
-		it('should show per-file errors with individual error messages in "Failed files:" section', async () => {
+		it('should show per-file errors with individual error messages in "失败文件：" section', async () => {
 			// This test verifies that per-file errors are properly displayed with
 			// both the file path and the specific error message for each file.
 
@@ -1407,15 +1409,15 @@ describe('FitSync', () => {
 			// Act
 			await syncAndHandleResult(fitSync, mockNotice);
 
-			// Assert - Verify the error message has the structured "Failed files:" section
+			// Assert - Verify the error message has the structured "失败文件：" section
 			const errorCall = mockNotice._calls.find(
 				(call: any) => call.method === 'setMessage' && call.args[1] === true
 			);
 			expect(errorCall).toBeDefined();
 			const errorMessage = errorCall!.args[0];
 
-			// Should have "Failed files:" section with bullet point and error message
-			expect(errorMessage).toMatch(/Failed files:\s+•\s+problematic-file\.md:\s+API error: rate limit exceeded/);
+			// Should have "失败文件：" section with bullet point and error message
+			expect(errorMessage).toMatch(/失败文件：\s+•\s+problematic-file\.md:\s+API error: rate limit exceeded/);
 		});
 	});
 
@@ -1447,10 +1449,10 @@ describe('FitSync', () => {
 			// Assert
 			expect(result).toEqual(expect.objectContaining({success: true}));
 			expect(mockNotice2._calls).toEqual([
-				{method: 'setMessage', args: ['Checking for changes...']},
-				{method: 'setMessage', args: ['Uploading local changes']},
-				{method: 'setMessage', args: ['Writing remote changes to local']},
-				{method: 'setMessage', args: ['Sync successful']}
+				{method: 'setMessage', args: ['正在检查变更……']},
+				{method: 'setMessage', args: ['正在上传本地变更']},
+				{method: 'setMessage', args: ['正在把远端变更写入本地']},
+				{method: 'setMessage', args: ['同步成功']}
 			]);
 
 			// Verify commit SHA was updated (this is the key behavior being tested)
@@ -1460,8 +1462,8 @@ describe('FitSync', () => {
 			// Verify no file operations (truly empty - no changes to tracked files)
 			expect(result).toMatchObject({
 				changeGroups: [
-					{heading: 'Local file updates:', changes: []},
-					{heading: 'Remote file updates:', changes: []}
+					{heading: '本地文件更新：', changes: []},
+					{heading: '远端文件更新：', changes: []}
 				],
 				clash: []
 			});

@@ -81,11 +81,7 @@ function isBinaryExtensionForSha(extension: string): boolean {
  * Isolates Obsidian Vault API quirks from sync logic.
  */
 export class LocalVault implements IVault<"local"> {
-	private vault: Vault;
-
-	constructor(vault: Vault) {
-		this.vault = vault;
-	}
+	constructor(public vault: Vault) {}
 
 	/**
 	 * Check if path should be included in state tracking.
@@ -299,7 +295,7 @@ export class LocalVault implements IVault<"local"> {
 			if (abstractFile) {
 				// Vault API can see it - check if it's a folder or file
 				if (abstractFile instanceof TFile) {
-					throw new Error(`Cannot create folder at ${currentPath}: a file already exists at this path`);
+					throw new Error(`无法创建文件夹 ${currentPath}：该路径已存在同名文件`);
 				}
 				// It's a folder (TFolder or similar), continue to next level
 				continue;
@@ -317,7 +313,7 @@ export class LocalVault implements IVault<"local"> {
 
 			if (stat) {
 				if (stat.type === 'file') {
-					throw new Error(`Cannot create folder at ${currentPath}: a file already exists at this path`);
+					throw new Error(`无法创建文件夹 ${currentPath}：该路径已存在同名文件`);
 				}
 				// Folder exists on disk (hidden folder), continue to next level
 				continue;
@@ -391,10 +387,10 @@ export class LocalVault implements IVault<"local"> {
 				changeType = 'MODIFIED';
 			} else if (file instanceof TFolder) {
 				// Path exists as a folder
-				throw new Error(`Cannot write file to ${path}: a folder with that name already exists`);
+				throw new Error(`无法写入 ${path}：该名称已存在同名文件夹`);
 			} else if (file) {
 				// Unknown type - future-proof for new Obsidian abstract file types
-				throw new Error(`Cannot write file to ${path}: path exists but is not a file (type: ${file.constructor.name})`);
+				throw new Error(`无法写入 ${path}：路径已存在但不是文件（类型：${file.constructor.name}）`);
 			} else {
 				// File not in vault index - check if it exists on disk (hidden files)
 				// See docs/api-compatibility.md "Reading Untracked Files"
@@ -475,9 +471,9 @@ export class LocalVault implements IVault<"local"> {
 				await this.vault.delete(file);
 				return {path, type: "REMOVED"};
 			} else if (file instanceof TFolder) {
-				throw new Error(`Cannot delete ${path}: it is a folder, not a file`);
+				throw new Error(`无法删除 ${path}：它是文件夹而不是文件`);
 			} else if (file) {
-				throw new Error(`Cannot delete ${path}: unknown file type (${file.constructor.name})`);
+				throw new Error(`无法删除 ${path}：未知的文件类型（${file.constructor.name}）`);
 			}
 
 			// File not in vault index - use adapter to delete (hidden files)
@@ -539,9 +535,9 @@ export class LocalVault implements IVault<"local"> {
 		}
 
 		const userWarning = suspiciousWrites.length > 0
-			? `⚠️ Encoding Issue Detected\n` +
-				`Suspicious filename patterns found during sync. ` +
-				`Check console logs for details or see Issue #51.`
+			? `⚠️ 检测到编码问题\n` +
+				`同步时发现可疑文件名模式。` +
+				`详情见控制台日志，或参阅 Issue #51。`
 			: undefined;
 
 		// Process file additions or updates

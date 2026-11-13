@@ -191,7 +191,7 @@ export class Fit {
 		fitLogger.log('.. ☁️ [RemoteVault] Fetching from GitHub...');
 		const { state, commitSha } = await this.remoteVault.readFromSource();
 		if (!commitSha) {
-			throw new Error("Expected RemoteGitHubVault to provide commitSha");
+			throw new Error("RemoteGitHubVault 未返回 commitSha");
 		}
 		const changes = compareFileStates(state, this.lastFetchedRemoteSha);
 

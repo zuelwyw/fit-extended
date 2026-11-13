@@ -23,7 +23,7 @@ export type SyncError = VaultError | SyncOrchestrationError;
 
 // Suggested: { success: true; changes: Array<{ heading: string, files: FileChange[] }>; clash: FileClash[] }
 export type SyncResult =
-    | { success: true; changeGroups: Array<{ heading: string, changes: FileChange[] }>; clash: FileClash[] }
+    | { success: true; changeGroups: Array<{ heading: string, changes: FileChange[] }>; clash: FileClash[]; conflictFiles?: string[] }
     | { success: false; error: SyncError };
 
 /**
@@ -35,7 +35,7 @@ export const SyncErrors = {
 		detailMessage,
 		details
 	}),
-	alreadySyncing: (detailMessage: string = 'Sync already in progress'): SyncOrchestrationError => ({
+	alreadySyncing: (detailMessage: string = '同步正在进行中'): SyncOrchestrationError => ({
 		type: 'already-syncing',
 		detailMessage
 	})

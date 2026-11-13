@@ -4,7 +4,7 @@
  * Defines the FitPlugin class and related types for Obsidian plugin integration.
  */
 
-import { Plugin, SettingTab } from 'obsidian';
+import { Notice, Plugin, SettingTab } from 'obsidian';
 import { Fit } from '@/fit';
 import FitNotice from '@/fitNotice';
 import FitSettingTab from '@/fitSetting';
@@ -16,6 +16,9 @@ import { FileStates } from '@/util/changeTracking';
 import { handleCriticalError } from '@/util/errorHandling';
 import { GitHubConnection } from '@/remotes/githubConnection';
 import * as Encryption from "@/encryption";
+import { DirectionalOperationRunner, prepareDirectionalOperation, SyncDirection } from '@/directionalOperations';
+import { BaselineConfirmModal, BidirectionalOptionsModal, CleanupOptionsModal, ConflictPreviewModal, DirectionOptionsModal, PlanPreviewModal } from '@/operationModals';
+import { SyncResult } from '@/syncResult';
 
 /**
  * Plugin configuration interface
@@ -73,8 +76,9 @@ export interface LocalStores {
  * Discriminated union representing the outcome of a sync operation.
  * Separates business logic (sync result) from UI lifecycle management.
  */
+type SuccessfulSync = Extract<SyncResult, { success: true }>;
 type SyncOutcome =
-	| { status: 'success'; result: Awaited<ReturnType<FitSync['sync']>> & { success: true } }
+	| { status: 'success'; result: SuccessfulSync }
 	| { status: 'already-syncing' }
 	| { status: 'error'; error: { type: string; message: string; details?: Record<string, unknown> } }
 	| { status: 'not-configured' };
@@ -111,6 +115,7 @@ export default class FitPlugin extends Plugin {
 	localStore: LocalStores;
 	fit: Fit;
 	fitSync: FitSync;
+	directionalRunner: DirectionalOperationRunner;
 	githubConnection: GitHubConnection | null;
 	autoSyncIntervalId: number | null;
 	fitPullRibbonIconEl: HTMLElement;
@@ -133,26 +138,26 @@ export default class FitPlugin extends Plugin {
 			}
 		};
 		appWithSetting.setting.open();
-		appWithSetting.setting.openTabById("fit");
+		appWithSetting.setting.openTabById("fit-extended");
 	}
 
 	checkSettingsConfigured(): boolean {
 		const actionItems: Array<string> = [];
 		if (this.settings.pat === "") {
-			actionItems.push("provide GitHub personal access token");
+			actionItems.push("填写 GitHub 个人访问令牌");
 		}
 		if (this.settings.owner === "") {
-			actionItems.push("select or enter a repository owner");
+			actionItems.push("选择或填写仓库所有者");
 		}
 		if (this.settings.repo === "") {
-			actionItems.push("select or enter a repository to sync to");
+			actionItems.push("选择或填写要同步的仓库");
 		}
 		if (this.settings.branch === "") {
-			actionItems.push("select a branch to sync to");
+			actionItems.push("选择要同步的分支");
 		}
 
 		if (actionItems.length > 0) {
-			const initialMessage = "Settings not configured, please complete the following action items:\n" + actionItems.join("\n");
+			const initialMessage = "设置尚未完成，请先处理以下事项：\n" + actionItems.join("\n");
 			const settingsNotice = new FitNotice(this.fit, ["static"], initialMessage);
 			this.openPluginSettings();
 			settingsNotice.remove("static");
@@ -327,7 +332,15 @@ export default class FitPlugin extends Plugin {
 	 * Wraps sync execution with UI lifecycle events (notice, animation).
 	 * This is the "decorator" that adds UI coordination to the core sync operation.
 	 */
-	private async executeSyncWithUICoordination(triggerType: 'manual' | 'auto'): Promise<void> {
+	isOperationRunning(): boolean {
+		return this.fitSync.syncing || this.directionalRunner.busy;
+	}
+
+	private async executeSyncWithUICoordination(triggerType: 'manual' | 'auto', cleanup: 'none' | 'ask' = 'none'): Promise<void> {
+		if (this.isOperationRunning()) {
+			new Notice('已有 FIT 操作正在运行，请稍后再试。');
+			return;
+		}
 		fitLogger.log(`[Plugin] ${triggerType === 'manual' ? 'Manual' : 'Auto'} sync requested`);
 
 		this.onSyncStart(triggerType);
@@ -338,7 +351,7 @@ export default class FitPlugin extends Plugin {
 		} catch (error) {
 			// Catch any unhandled exceptions (programming errors, unexpected failures)
 			const errorMsg = error instanceof Error ? error.message : String(error);
-			const fullMessage = `Sync failed unexpectedly: ${errorMsg}`;
+			const fullMessage = `同步意外失败：${errorMsg}`;
 
 			fitLogger.log('[Plugin] Unhandled sync error', {
 				error: errorMsg,
@@ -373,6 +386,14 @@ export default class FitPlugin extends Plugin {
 
 				// Clean up and nullify notice reference (success can nullify)
 				this.onSyncEnd(triggerType);
+
+				// Optional conflict cleanup after a successful manual sync
+				if (triggerType === 'manual' && cleanup === 'ask' && outcome.result.conflictFiles && outcome.result.conflictFiles.length > 0) {
+					this.currentSyncNotice = new FitNotice(this.fit, [], "正在准备冲突清理");
+					await this.startConflictCleanupFlow(outcome.result.conflictFiles, 'last');
+					this.currentSyncNotice?.remove('done');
+					this.currentSyncNotice = null;
+				}
 				break;
 
 			case 'already-syncing':
@@ -388,7 +409,7 @@ export default class FitPlugin extends Plugin {
 
 			case 'error':
 				// Show sticky error notice
-				this.currentSyncNotice!.setMessage(`Sync failed: ${outcome.error.message}`, true);
+				this.currentSyncNotice!.setMessage(`同步失败：${outcome.error.message}`, true);
 
 				// Clean up state WITHOUT nullifying the error notice reference
 				this.onSyncError(triggerType);
@@ -407,11 +428,149 @@ export default class FitPlugin extends Plugin {
 		await this.executeSyncWithUICoordination('manual');
 	};
 
+	/**
+	 * Entry point: Bidirectional sync with per-run conflict cleanup choice.
+	 */
+	triggerBidirectionalSyncWithOptions = async (): Promise<void> => {
+		if (this.isOperationRunning()) {
+			new Notice('已有 FIT 操作正在运行，请稍后再试。');
+			return;
+		}
+		if (!this.checkSettingsConfigured()) return;
+		const options = await new BidirectionalOptionsModal(this.app).show();
+		if (options === null) return;
+		await this.executeSyncWithUICoordination('manual', options.cleanup === 'none' ? 'none' : 'ask');
+	};
+
+	/**
+	 * Entry point: one-way upload with per-run unique-file choice.
+	 */
+	triggerDirectionalUpload = async (): Promise<void> => {
+		await this.runDirectionalOperation('upload');
+	};
+
+	/**
+	 * Entry point: one-way pull with per-run unique-file choice.
+	 */
+	triggerDirectionalPull = async (): Promise<void> => {
+		await this.runDirectionalOperation('pull');
+	};
+
+	private async runDirectionalOperation(direction: SyncDirection): Promise<void> {
+		if (this.isOperationRunning()) {
+			new Notice('已有 FIT 操作正在运行，请稍后再试。');
+			return;
+		}
+		if (!this.checkSettingsConfigured()) return;
+		await this.loadLocalStore();
+		const options = await new DirectionOptionsModal(this.app, direction).show();
+		if (options === null) return;
+		let plan;
+		try {
+			plan = await prepareDirectionalOperation(this.fit, direction, options.writeMode, options.deleteUnique);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// 无基线时不再"全量上传建基线"：零上传采纳基线后回到选项流程
+			if (message.includes('尚无同步基线')) {
+				const confirm = await new BaselineConfirmModal(this.app, direction).show();
+				if (confirm === null) return;
+				const baselineNotice = new FitNotice(this.fit, [], '建立基线');
+				try {
+					await this.directionalRunner.adoptBaseline(baselineNotice);
+					baselineNotice.remove('done');
+				} catch (baselineError) {
+					baselineNotice.setMessage(`建立基线失败：${baselineError instanceof Error ? baselineError.message : String(baselineError)}`, true);
+					return;
+				}
+				new Notice('基线已建立，请重新选择本次操作范围。');
+				return;
+			}
+			new Notice(`无法准备${direction === 'upload' ? '上传' : '拉取'}：${message}`);
+			return;
+		}
+		if (plan.changes.length === 0) {
+			new Notice(direction === 'upload'
+				? '没有需要上传的内容：本地可同步文件已与所选远端状态一致。'
+				: '没有需要拉取的内容：远端可同步文件已与所选本地状态一致。');
+			return;
+		}
+		const confirmed = await new PlanPreviewModal(this.app, plan).show();
+		if (confirmed === null) return;
+		const notice = new FitNotice(this.fit, [direction === 'upload' ? 'fit-push-ribbon-el' : 'fit-pull-ribbon-el'], direction === 'upload' ? '正在上传' : '正在拉取');
+		const result = await this.directionalRunner.execute(confirmed, notice);
+		this.showDirectionalResult(result, notice);
+	}
+
+	private showDirectionalResult(result: SyncResult, notice: FitNotice): void {
+		if (result.success) {
+			if (this.settings.notifyChanges) {
+				showFileChanges(result.changeGroups);
+			}
+			notice.remove('done');
+		} else {
+			const errorMessage = result.error.type === 'already-syncing'
+				? '已有 FIT 操作正在运行。'
+				: this.fitSync.getSyncErrorMessage(result.error);
+			notice.setMessage(`${result.error.type === 'already-syncing' ? '操作已跳过' : '操作失败'}：${errorMessage}`, true);
+		}
+	}
+
+	/**
+	 * Entry point: standalone conflict cleanup with per-run scope choice.
+	 */
+	triggerConflictCleanup = async (): Promise<void> => {
+		if (this.isOperationRunning()) {
+			new Notice('已有 FIT 操作正在运行，请稍后再试。');
+			return;
+		}
+		if (!this.checkSettingsConfigured()) return;
+		const notice = new FitNotice(this.fit, [], '正在准备冲突清理');
+		await this.startConflictCleanupFlow(null, null);
+		notice.remove('done');
+	};
+
+	/**
+	 * Shared flow: choose scope, list candidate files, confirm, delete.
+	 * @param conflictFiles - paths written by the last sync; null means standalone flow
+	 */
+	private async startConflictCleanupFlow(conflictFiles: string[] | null, _scope: 'last' | null): Promise<void> {
+		const options = await new CleanupOptionsModal(this.app, this.directionalRunner.hasLastConflictSet || conflictFiles !== null).show();
+		if (options === null) return;
+		if (options.scope === 'last' && conflictFiles !== null) {
+			this.directionalRunner.recordConflicts(conflictFiles.map(path => ({ path, type: 'ADDED' as const })));
+		}
+		let files;
+		try {
+			files = await this.directionalRunner.listConflictFiles(conflictFiles !== null && options.scope === 'last' ? 'last' : options.scope);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			new Notice(`冲突清理：${message}`);
+			return;
+		}
+		const confirmed = await new ConflictPreviewModal(this.app, files, options.scope).show();
+		if (confirmed === null) return;
+		if (files.length === 0) {
+			new Notice('没有需要删除的冲突副本。');
+			return;
+		}
+		const result = await this.directionalRunner.cleanupConflicts(options.scope);
+		if (result.failed.length > 0) {
+			const failedList = result.failed.map(entry => `${entry.path}: ${entry.error}`).join('\n');
+			new Notice(`冲突清理完成，但有 ${result.failed.length} 项失败：\n${failedList}`);
+		} else {
+			new Notice(`冲突清理完成：已删除 ${result.deleted.length} 个文件。`);
+		}
+	}
+
 	loadRibbonIcons() {
 		// Pull from remote then Push to remote if no clashing changes detected during pull
 		// TODO: Update title from "GitHub" to selected remote service when other services are supported.
-		this.fitSyncRibbonIconEl = this.addRibbonIcon('github', 'Sync to GitHub', this.triggerManualSync);
+		this.fitSyncRibbonIconEl = this.addRibbonIcon('github', '同步到 GitHub', this.triggerManualSync);
 		this.fitSyncRibbonIconEl.addClass('fit-sync-ribbon-el');
+		this.fitPullRibbonIconEl = this.addRibbonIcon('download', '从 GitHub 拉取（单向）', () => this.triggerDirectionalPull());
+		this.fitPullRibbonIconEl.addClass('fit-pull-ribbon-el');
+		this.fitPushRibbonIconEl = this.addRibbonIcon('upload', '上传到 GitHub（单向）', () => this.triggerDirectionalUpload());
+		this.fitPushRibbonIconEl.addClass('fit-push-ribbon-el');
 	}
 
 	/**
@@ -424,7 +583,7 @@ export default class FitPlugin extends Plugin {
 			} else if (this.settings.autoSync === "remind") {
 				const { changes } = await this.fit.getRemoteChanges();
 				if (changes.length > 0) {
-					const initialMessage = "Remote update detected, please pull the latest changes.";
+					const initialMessage = "检测到远端更新，请拉取最新变更。";
 					const intervalNotice = new FitNotice(this.fit, ["static"], initialMessage);
 					intervalNotice.remove("static");
 				}
@@ -467,14 +626,35 @@ export default class FitPlugin extends Plugin {
 				: null;
 			this.fit = new Fit(this.settings, this.localStore, this.app.vault);
 			this.fitSync = new FitSync(this.fit, this.saveLocalStoreCallback);
+			this.directionalRunner = new DirectionalOperationRunner(this.fit, this.saveLocalStoreCallback);
 			this.settingTab = new FitSettingTab(this.app, this);
 			this.loadRibbonIcons();
 
 			// Add command to command palette for fit sync
 			this.addCommand({
 				id: 'fit-sync',
-				name: 'Fit Sync',
+				name: 'Fit 双向同步',
 				callback: this.triggerManualSync
+			});
+			this.addCommand({
+				id: 'fit-sync-options',
+				name: 'Fit 双向同步（可选冲突清理）',
+				callback: this.triggerBidirectionalSyncWithOptions
+			});
+			this.addCommand({
+				id: 'fit-upload',
+				name: 'Fit 单向上传（仅上传到 GitHub）',
+				callback: this.triggerDirectionalUpload
+			});
+			this.addCommand({
+				id: 'fit-pull',
+				name: 'Fit 单向拉取（仅从 GitHub 下载）',
+				callback: this.triggerDirectionalPull
+			});
+			this.addCommand({
+				id: 'fit-cleanup-conflicts',
+				name: 'Fit 清理冲突副本（_fit/）',
+				callback: this.triggerConflictCleanup
 			});
 
 			// This adds a settings tab so the user can configure various aspects of the plugin
@@ -485,7 +665,7 @@ export default class FitPlugin extends Plugin {
 
 			fitLogger.log('[Plugin] Plugin initialization completed successfully');
 		} catch (error) {
-			handleCriticalError('Plugin failed to load', error, {
+			handleCriticalError('插件加载失败', error, {
 				logger: fitLogger,
 				showNotice: true
 			});

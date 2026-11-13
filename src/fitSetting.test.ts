@@ -109,7 +109,7 @@ describe('FitSettingTab - GitHub settings', () => {
 		await settingTab.repoInfoBlock();
 
 		// Verify: Authenticate button is disabled when no PAT
-		const authenticateButton = findButtonByText(settingTab.containerEl, 'Authenticate user')!;
+		const authenticateButton = findButtonByText(settingTab.containerEl, '验证用户')!;
 		expect(authenticateButton.disabled).toBe(true);
 
 		// When: click attempted on disabled button
@@ -150,13 +150,13 @@ describe('FitSettingTab - GitHub settings', () => {
 		await settingTab.repoInfoBlock();
 
 		// Get inputs by their labels (user-visible text)
-		const patInput = findInputByLabel(settingTab.containerEl, 'Github personal access token')!;
-		const ownerInput = findInputByLabel(settingTab.containerEl, 'Repository owner')!;
-		const repoInput = findInputByLabel(settingTab.containerEl, 'Repository name')!;
+		const patInput = findInputByLabel(settingTab.containerEl, 'GitHub 个人访问令牌')!;
+		const ownerInput = findInputByLabel(settingTab.containerEl, '仓库所有者')!;
+		const repoInput = findInputByLabel(settingTab.containerEl, '仓库名称')!;
 
 		// Verify: Start in unauthenticated state
-		expect(ownerInput.placeholder).toBe('Authenticate above to auto-fill');
-		expect(repoInput.placeholder).toBe('Authenticate above for suggestions');
+		expect(ownerInput.placeholder).toBe('在上方验证后自动填充');
+		expect(repoInput.placeholder).toBe('在上方验证后获取建议');
 
 		// When: User enters PAT
 		patInput.value = 'ghp_test';
@@ -165,11 +165,11 @@ describe('FitSettingTab - GitHub settings', () => {
 
 		// Then: GitHubConnection created, placeholders updated
 		expect(fakePlugin.githubConnection).not.toBeNull();
-		expect(ownerInput.placeholder).toBe('owner-username');
-		expect(repoInput.placeholder).toBe('repo-name');
+		expect(ownerInput.placeholder).toBe('所有者用户名');
+		expect(repoInput.placeholder).toBe('仓库名称');
 
 		// When: User clicks authenticate button
-		const authenticateButton = findButtonByText(settingTab.containerEl, 'Authenticate user')!;
+		const authenticateButton = findButtonByText(settingTab.containerEl, '验证用户')!;
 		expect(authenticateButton.disabled).toBe(false);  // Should be enabled now
 		authenticateButton.click();
 		await vi.advanceTimersByTimeAsync(0);  // Wait for async saveSettings
@@ -227,7 +227,7 @@ describe('FitSettingTab - GitHub settings', () => {
 		expect(suggestions).toEqual(['repo1', 'repo2', 'repo3']);
 
 		// When: User changes owner to bob via UI input and refreshes
-		const ownerInput = findInputByLabel(settingTab.containerEl, 'Repository owner')!;
+		const ownerInput = findInputByLabel(settingTab.containerEl, '仓库所有者')!;
 		ownerInput.value = 'bob';
 		ownerInput.dispatchEvent(new Event('input', { bubbles: true }));
 		await vi.advanceTimersByTimeAsync(0);  // Wait for debounced repo fetching
@@ -354,7 +354,7 @@ describe('FitSettingTab - GitHub settings', () => {
 		settingTab.githubUserInfoBlock();
 		await settingTab.repoInfoBlock();
 
-		const authenticateButton = findButtonByText(settingTab.containerEl, 'Authenticate user')!;
+		const authenticateButton = findButtonByText(settingTab.containerEl, '验证用户')!;
 
 		// Verify: Button starts disabled (no connection)
 		expect(authenticateButton.disabled).toBe(true);
@@ -396,7 +396,7 @@ describe('FitSettingTab - GitHub settings', () => {
 			settingTab.githubUserInfoBlock();
 			await settingTab.repoInfoBlock();
 
-			const ownerInput = findInputByLabel(settingTab.containerEl, 'Repository owner')!;
+			const ownerInput = findInputByLabel(settingTab.containerEl, '仓库所有者')!;
 
 			// When: User types "the" character by character
 			ownerInput.value = 't';

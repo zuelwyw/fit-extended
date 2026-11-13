@@ -146,9 +146,9 @@ export class FitSync implements IFitSync {
 		syncNotice: FitNotice
 	): Promise<ApplyChangesResult<"local">> {
 		if (clashFiles.length > 0) {
-			syncNotice.setMessage('Change conflicts detected');
+			syncNotice.setMessage('检测到变更冲突');
 		} else {
-			syncNotice.setMessage("Writing remote changes to local");
+			syncNotice.setMessage("正在把远端变更写入本地");
 		}
 
 		const resolvedChanges: Array<{path: string, content: FileContent}> = [];
@@ -455,7 +455,7 @@ export class FitSync implements IFitSync {
 		);
 
 		// 3a. Push local changes to remote
-		syncNotice.setMessage("Uploading local changes");
+		syncNotice.setMessage("正在上传本地变更");
 		const pushUpdate = {
 			localChanges: safeLocal,
 			parentCommitSha: remoteUpdate.latestRemoteCommitSha
@@ -553,6 +553,8 @@ export class FitSync implements IFitSync {
 		};
 	}
 
+	get syncing(): boolean { return this.isSyncing; }
+
 	async sync(syncNotice: FitNotice): Promise<SyncResult> {
 		// Check if already syncing
 		if (this.isSyncing) {
@@ -563,7 +565,7 @@ export class FitSync implements IFitSync {
 		this.isSyncing = true;
 
 		try {
-			syncNotice.setMessage("Checking for changes...");
+			syncNotice.setMessage("正在检查变更……");
 
 			// Get local and remote changes in parallel
 			// Use allSettled to ensure both operations complete (or fail) before processing
@@ -664,20 +666,21 @@ export class FitSync implements IFitSync {
 
 			// Set appropriate success message
 			if (conflicts.length === 0) {
-				syncNotice.setMessage(`Sync successful`);
+				syncNotice.setMessage(`同步成功`);
 			} else if (conflicts.some(f => f.remoteOp !== "REMOVED")) {
-				syncNotice.setMessage(`Synced with remote, unresolved conflicts written to _fit`);
+				syncNotice.setMessage(`已与远端同步，未解决的冲突已写入 _fit`);
 			} else {
-				syncNotice.setMessage(`Synced with remote, ignored remote deletion of locally changed files`);
+				syncNotice.setMessage(`已与远端同步，已忽略对本地已修改文件的远端删除`);
 			}
 
 			return {
 				success: true,
 				changeGroups: [
-					{heading: "Local file updates:", changes: localOps},
-					{heading: "Remote file updates:", changes: remoteOps},
+					{heading: "本地文件更新：", changes: localOps},
+					{heading: "远端文件更新：", changes: remoteOps},
 				],
-				clash: conflicts
+				clash: conflicts,
+				conflictFiles: localOps.filter(op => op.path.startsWith('_fit/') && op.type !== 'REMOVED').map(op => op.path)
 			};
 
 		} catch (error) {
@@ -782,16 +785,19 @@ export class FitSync implements IFitSync {
 		if (syncError instanceof VaultError) {
 			switch (syncError.type) {
 				case 'network':
-					baseMessage = `${syncError.message}. Please check your internet connection.`;
+					// 限流消息自带等待指引，原文透出即可；其余网络错误补充连接检查提示
+					baseMessage = /限流|rate limit/i.test(syncError.message)
+						? syncError.message
+						: `${syncError.message}。请检查网络连接。`;
 					break;
 				case 'authentication':
-					baseMessage = `${syncError.message}. Check your GitHub personal access token.`;
+					baseMessage = `${syncError.message}。请检查 GitHub 个人访问令牌。`;
 					break;
 				case 'remote_not_found':
-					baseMessage = `${syncError.message}. Check your repo and branch settings.`;
+					baseMessage = `${syncError.message}。请检查仓库与分支设置。`;
 					break;
 				case 'filesystem':
-					baseMessage = `File system error: ${syncError.message}`;
+					baseMessage = `文件系统错误：${syncError.message}`;
 					break;
 			}
 
@@ -800,7 +806,7 @@ export class FitSync implements IFitSync {
 				const errorEntries = syncError.details.errors;
 				if (errorEntries.length <= 3) {
 					// Show all errors with details for small counts
-					baseMessage += '\n\nFailed files:';
+					baseMessage += '\n\n失败文件：';
 					for (const { path, error } of errorEntries) {
 						const errorMsg = error instanceof Error ? error.message : String(error);
 						// Show only first line for multi-line errors (full error in console/logs)
@@ -809,18 +815,18 @@ export class FitSync implements IFitSync {
 					}
 				} else {
 					// Show first 3 with details, then summarize rest
-					baseMessage += `\n\nFailed files (${errorEntries.length} total):`;
+					baseMessage += `\n\n失败文件（共 ${errorEntries.length} 个）：`;
 					for (let i = 0; i < 3; i++) {
 						const { path, error } = errorEntries[i];
 						const errorMsg = error instanceof Error ? error.message : String(error);
 						const displayMsg = errorMsg.split('\n')[0];
 						baseMessage += `\n  • ${path}: ${displayMsg}`;
 					}
-					baseMessage += `\n  • ... and ${errorEntries.length - 3} more`;
+					baseMessage += `\n  • ……另有 ${errorEntries.length - 3} 个`;
 				}
 
 				// Add recovery guidance for per-file errors
-				baseMessage += '\n\n💡 To sync other files: Move problematic file(s) out of your vault temporarily, or use git to sync them manually. .gitignore support coming soon.';
+				baseMessage += '\n\n💡 如需同步其他文件：请先把有问题的文件暂时移出仓库，或用 git 手动同步。.gitignore 支持即将推出。';
 			}
 		} else {
 			// Handle SyncOrchestrationError (type === 'unknown' | 'already-syncing')
