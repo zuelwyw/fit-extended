@@ -33,3 +33,4 @@ coverage/
 
 # Local agent instructions (personal workflow details, overrides AGENTS.md)
 AGENTS.local.md
+dist/

@@ -614,7 +614,10 @@ export default class FitSettingTab extends PluginSettingTab {
 					);
 
 					try {
-						const applied = await this.plugin.fitSync.clear();
+						// 直接调用远端适配器：不再为这一个动作保留整个旧同步引擎。
+						const newStore = await this.plugin.fit.remoteVault.clear();
+						if (newStore != null) await this.plugin.saveLocalStoreCallback(newStore);
+						const applied = newStore != null;
 						message(notice, applied ? "仓库已清空" : "没有可清空的内容");
 						notice.remove("done", 5000);
 					} catch (e) {
@@ -642,40 +645,95 @@ export default class FitSettingTab extends PluginSettingTab {
 
 
 		new Setting(containerEl)
-			.setName("自动同步")
-			.setDesc(`远端有更新时自动同步你的库。（静默：后台同步不显示通知，但文件变更与冲突通知除外）`)
-			.addDropdown(dropdown => {
-				dropdown
-					.addOption('off', '关闭')
-					.addOption('muted', '静默')
-					.addOption('remind', '仅提醒')
-					.addOption('on', '开启')
-					.setValue(this.plugin.settings.autoSync ? this.plugin.settings.autoSync : 'off')
-					.onChange(async (value) => {
-						this.plugin.settings.autoSync = value as "off" | "muted" | "remind" | "on";
-						checkIntervalSlider.settingEl.addClass(value === "off" ? "clear" : "restore");
-						checkIntervalSlider.settingEl.removeClass(value === "off" ? "restore" : "clear");
-						await this.plugin.saveSettings();
-					});
-			});
-
-		const checkIntervalSlider = new Setting(containerEl)
-			.setName('自动检查间隔')
-			.setDesc(`每 ${this.plugin.settings.checkEveryXMinutes} 分钟在后台自动检查远端变更。`)
-			.addSlider(slider => slider
-				.setLimits(1, 60, 1)
-				.setValue(this.plugin.settings.checkEveryXMinutes)
-				.setDynamicTooltip()
+			.setName('打开知识库时自动检查变化')
+			.setDesc('开启后，每次打开知识库检查一次并生成待审计划；不会自动执行同步。关闭不影响手动同步。')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.checkOnVaultOpen)
 				.onChange(async (value) => {
-					this.plugin.settings.checkEveryXMinutes = value;
+					this.plugin.settings.checkOnVaultOpen = value;
 					await this.plugin.saveSettings();
-					checkIntervalSlider.setDesc(`每 ${value} 分钟在后台自动检查远端变更。`);
-				})
-			);
+				}));
+	};
 
-		if (this.plugin.settings.autoSync === "off") {
-			checkIntervalSlider.settingEl.addClass("clear");
+	/**
+	 * Git 忽略规则：单一规则来源。
+	 *
+	 * 只允许编辑当前仓库共享的 .gitignore；本机排除与个人全局规则只读展示。
+	 * 不维护第二套 FE 排除清单，也不擅自取消文件跟踪。
+	 */
+	ignoreRulesBlock = (): void => {
+		const { containerEl } = this;
+		new Setting(containerEl).setHeading().setName("Git 忽略规则");
+		new Setting(containerEl)
+			.setDesc("只编辑当前仓库共享的 .gitignore。本机排除与个人全局忽略规则参与 Git 原生匹配，但在这里只读展示。已跟踪的文件不会因新增规则自动停止跟踪。");
+
+		let draft = "";
+		let original = "";
+		const statusEl = containerEl.createDiv({ cls: "fit-operation-summary" });
+
+		const sharedSetting = new Setting(containerEl)
+			.setName("共享 .gitignore")
+			.addTextArea(area => {
+				area.inputEl.rows = 8;
+				area.inputEl.addClass("fit-gitignore-editor");
+				void this.plugin.fit?.localVault.vault.adapter.read(".gitignore").then(content => {
+					original = content;
+					draft = content;
+					area.setValue(content);
+				}).catch(() => {
+					original = "";
+					area.setValue("");
+				});
+				area.onChange(value => {
+					draft = value;
+					statusEl.setText(draft === original ? "" : "规则已修改，尚未保存。保存会使预览中的旧计划失效。");
+				});
+			})
+			.addButton(button => button.setButtonText("保存共享规则").setCta().onClick(async () => {
+				const adapter = this.plugin.fit?.localVault.vault.adapter;
+				if (!adapter) return;
+				try {
+					await adapter.write(".gitignore", draft);
+					original = draft;
+					statusEl.setText("已保存共享 .gitignore。");
+					new FitNotice(this.plugin.fit, ["done"], "忽略规则已保存", 4000, false);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					statusEl.setText(`保存失败：${message}`);
+				}
+			}));
+
+		if (!this.plugin.fit) {
+			sharedSetting.setDesc("尚未完成 GitHub 配置，暂时无法编辑共享规则。");
 		}
+
+		const readOnlyBox = containerEl.createDiv({ cls: "fit-operation-file-list" });
+		// 跟踪状态提示：已跟踪但又被忽略的文件必须明确讲清，不能静默。
+		void this.plugin.syncService?.scopeContext().then(async scope => {
+			readOnlyBox.empty();
+			for (const source of scope.describeSources()) {
+				if (source.editable) continue;
+				const row = readOnlyBox.createDiv({ cls: "fit-operation-conflict-meta" });
+				const availability = source.availability === "available"
+					? "可用"
+					: source.availability === "absent" ? "未配置" : "不可访问";
+				row.setText(`${source.label}：${availability}${source.reason ? `（${source.reason}）` : ""}`);
+				if (source.availability === "available" && source.content) {
+					const preview = readOnlyBox.createEl("pre", { cls: "fit-gitignore-readonly" });
+					preview.setText(source.content);
+				}
+			}
+
+			// 子目录规则：参与匹配但只读展示，避免用户以为只有根文件生效。
+			const nestedDirs = scope.nestedIgnoreDirs();
+			if (nestedDirs.length > 0) {
+				const nestedRow = readOnlyBox.createDiv({ cls: "fit-operation-conflict-meta" });
+				nestedRow.setText(`子目录 .gitignore（只读参与匹配）：${nestedDirs.join("、")}`);
+			}
+
+		}).catch(error => {
+			readOnlyBox.setText(`无法读取规则来源：${error instanceof Error ? error.message : String(error)}`);
+		});
 	};
 
 	noticeConfigBlock = () => {
@@ -919,16 +977,20 @@ export default class FitSettingTab extends PluginSettingTab {
 			}
 		};
 		new Setting(containerEl)
-			.setName("双向同步")
-			.setDesc("双向同步；可另行选择是否在同步后清理冲突副本（每次操作时选择）。")
-			.addButton(button => button.setCta().setButtonText("同步…").onClick(run(async () => this.plugin.triggerBidirectionalSyncWithOptions())));
+			.setName("双向同步（传播删除）")
+			.setDesc("默认同步方式：先生成计划供你逐项审阅与决策，确认后才执行。")
+			.addButton(button => button.setCta().setButtonText("同步…").onClick(run(async () => this.plugin.triggerManualSync())));
+		new Setting(containerEl)
+			.setName("双向同步（选择规则）")
+			.setDesc("在传播删除与不传播删除之间选择，然后审阅执行。")
+			.addButton(button => button.setButtonText("选择…").onClick(run(async () => this.plugin.triggerSyncWithRuleChoice(true))));
 		new Setting(containerEl)
 			.setName("单向上传")
-			.setDesc("把本地新增和修改上传到 GitHub；可选择删除远端独有文件（每次操作时选择）。")
+			.setDesc("在补缺、更新、覆盖、镜像四类规则中选择，然后审阅执行。")
 			.addButton(button => button.setButtonText("上传…").onClick(run(async () => this.plugin.triggerDirectionalUpload())));
 		new Setting(containerEl)
 			.setName("单向拉取")
-			.setDesc("把远端新增和修改下载到本地库；可选择删除本地独有文件（每次操作时选择）。")
+			.setDesc("在补缺、更新、覆盖、镜像四类规则中选择，然后审阅执行。")
 			.addButton(button => button.setButtonText("拉取…").onClick(run(async () => this.plugin.triggerDirectionalPull())));
 		new Setting(containerEl)
 			.setName("清理冲突副本")
@@ -945,6 +1007,7 @@ export default class FitSettingTab extends PluginSettingTab {
 		this.githubUserInfoBlock();
 		this.repoInfoBlock();
 		this.localConfigBlock();
+		this.ignoreRulesBlock();
 		this.noticeConfigBlock();
 		this.refreshFields("withCache");
 	}

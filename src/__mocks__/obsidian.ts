@@ -84,6 +84,12 @@ function enhanceElement<T extends HTMLElement>(el: T): T {
 		return enhanced.createEl('div', opts);
 	};
 
+	// Obsidian 的 DOM 扩展之一：真实环境存在，测试桩此前缺失，
+	// 导致任何用 createSpan 的界面在测试里根本无法渲染。
+	enhanced.createSpan = (opts?: { cls?: string; attr?: Record<string, string>; text?: string }) => {
+		return enhanced.createEl('span', opts);
+	};
+
 	enhanced.empty = () => { el.innerHTML = ''; return enhanced; };
 	enhanced.addClass = (cls: string) => { el.classList.add(cls); return enhanced; };
 	enhanced.removeClass = (cls: string) => { el.classList.remove(cls); return enhanced; };
@@ -91,6 +97,32 @@ function enhanceElement<T extends HTMLElement>(el: T): T {
 	enhanced.setText = (text: string) => { el.textContent = text; return enhanced; };
 
 	return enhanced;
+}
+
+/**
+ * Minimal Modal mock: exposes the same lifecycle the plugin relies on
+ * (modalEl/titleEl/contentEl + open/close calling onOpen/onClose).
+ *
+ * 之前完全缺失，导致审阅弹窗在任何测试里都无法实例化——
+ * "界面渲染到一半抛错" 这类缺陷因此不可能被发现。
+ */
+export class Modal {
+	app: any;
+	containerEl: HTMLElement;
+	modalEl: HTMLElement;
+	titleEl: HTMLElement;
+	contentEl: HTMLElement;
+	constructor(app: any) {
+		this.app = app;
+		this.containerEl = enhanceElement(document.createElement('div'));
+		this.modalEl = enhanceElement(document.createElement('div'));
+		this.titleEl = enhanceElement(document.createElement('div'));
+		this.contentEl = enhanceElement(document.createElement('div'));
+	}
+	open() { this.onOpen(); }
+	close() { this.onClose(); }
+	onOpen() {}
+	onClose() {}
 }
 
 export class PluginSettingTab {

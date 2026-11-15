@@ -23,7 +23,9 @@ export function init(p: FitPlugin) {
 }
 
 export function isEnabled(): boolean {
-	return plugin.settings.encryptionPassword !== "";
+	// 插件未完成初始化（init 未被调用）时按"未加密"处理：
+	// 检查路径在插件 onload 之前被测试/诊断 harness 调用是合法场景。
+	return Boolean(plugin?.settings?.encryptionPassword);
 }
 
 async function getMasterKey(password: string): Promise<CryptoKey> {

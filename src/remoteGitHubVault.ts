@@ -14,8 +14,11 @@ import { BlobSha, CommitSha, EMPTY_TREE_SHA, TreeSha } from "./util/hashing";
 import { Content, FileContent } from "./util/contentEncoding";
 import { detectNormalizationIssues } from "./util/filePath";
 import { withSlowOperationMonitoring } from "./util/asyncMonitoring";
+import { createTimeoutSignal, isTimeoutAbort, CHECK_REQUEST_TIMEOUT_MS } from "./util/requestTimeout";
 import { fitLogger } from "./logger";
 import { detectSuspiciousCorrespondence } from "./util/pathPattern";
+import { createLazyQueue, BLOB_CREATION_RATE } from "./util/rateLimiter";
+import { createCommitOnBranch, ConditionalCommitOutcome } from "./remotePublish";
 import * as Encryption from "./encryption";
 
 /**
@@ -191,23 +194,50 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 	// ===== Read Operations =====
 
 	/**
+	 * 检查阶段的读取请求：带真实中止的超时。
+	 *
+	 * 为什么不复用 Promise.race：race 只是"不再等待"，底层连接还在跑，
+	 * 用户看到失败但请求仍在消耗配额。这里把 AbortSignal 透传给 Octokit，
+	 * 超时直接中断连接。超时归为"检查失败、未执行同步"——读取没有任何写入，
+	 * 不能进入发布结果不明（uncertain）的语义。
+	 */
+	private async requestWithCheckTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+		const timeout = createTimeoutSignal(CHECK_REQUEST_TIMEOUT_MS);
+		try {
+			return await run(timeout.signal);
+		} catch (error) {
+			if (isTimeoutAbort(error)) {
+				throw VaultError.network(
+					'检查超时：读取远端状态超过 30 秒未响应，已中止；未执行任何同步。',
+					{ originalError: error }
+				);
+			}
+			throw error;
+		} finally {
+			timeout.cancel();
+		}
+	}
+
+	/**
 	 * Fetch commit SHA and tree SHA in one API call
 	 * More efficient than separate getRef() + getCommit() calls
 	 */
 	public async getLatestCommitAndTreeSha(): Promise<{ commitSha: CommitSha; treeSha: TreeSha }> {
 		try {
-			const {data: commit} = await this.octokit.request(
+			const {data: commit} = await this.requestWithCheckTimeout(signal => this.octokit.request(
 				`GET /repos/{owner}/{repo}/commits/{ref}`, {
 					owner: this.owner,
 					repo: this.repo,
 					ref: this.branch,
-					headers: this.headers
-				});
+					headers: this.headers,
+					signal
+				}));
 			return {
 				commitSha: commit.sha as CommitSha,
 				treeSha: commit.commit.tree.sha as TreeSha
 			};
 		} catch (error) {
+			if (error instanceof VaultError) throw error;
 			return await this.wrapOctokitError(error, 'repo-or-branch');
 		}
 	}
@@ -217,20 +247,58 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 	 */
 	private async getTree(tree_sha: TreeSha): Promise<TreeNode[]> {
 		try {
-			const { data: tree } = await this.octokit.request(
+			const { data: tree } = await this.requestWithCheckTimeout(signal => this.octokit.request(
 				`GET /repos/{owner}/{repo}/git/trees/{tree_sha}`, {
 					owner: this.owner,
 					repo: this.repo,
 					tree_sha,
 					recursive: 'true',
-					headers: this.headers
-				});
+					headers: this.headers,
+					signal
+				}));
+			// GitHub 对超大仓的递归树会返回 truncated:true，此时 tree 只是**部分**内容。
+			// 把它当成完整存在性集合会让镜像把"没返回的路径"当成目标独有而删除，
+			// 也会让基线少记路径。必须明确失败，绝不静默按不完整树规划。
+			if ((tree as { truncated?: boolean }).truncated) {
+				throw VaultError.network(
+					`远端树被 GitHub 截断（tree ${tree_sha}），无法作为完整存在性集合使用。` +
+					`请缩小仓库范围或改用非递归方式后重试；本次未生成计划、未改动任何文件。`,
+					{ originalError: new Error('tree truncated') }
+				);
+			}
 			return tree.tree as TreeNode[];
 		} catch (error) {
+			if (error instanceof VaultError) throw error;
 			return await this.wrapOctokitError(error, 'repo-or-branch');
 		}
 	}
 
+
+	/**
+	 * 该路径最后一次提交的时间（ISO 字符串）。
+	 *
+	 * Git 树只存内容，不存文件 mtime；远端"最后修改时间"的唯一可靠来源是
+	 * 按路径过滤的提交历史。只用于审阅时给用户一个判断依据，失败返回 null，
+	 * 不抛异常、不编造时间。
+	 */
+	async lastCommitTimeOf(path: string): Promise<string | null> {
+		const target = Encryption.isEnabled() ? await Encryption.encryptPath(path) : path;
+		try {
+			const { data } = await this.octokit.request(
+				`GET /repos/{owner}/{repo}/commits`, {
+					owner: this.owner,
+					repo: this.repo,
+					path: target,
+					per_page: 1,
+					headers: this.headers
+				});
+			const entry = Array.isArray(data) ? data[0] : undefined;
+			const date = entry?.commit?.committer?.date ?? entry?.commit?.author?.date;
+			return typeof date === "string" ? date : null;
+		} catch {
+			return null;
+		}
+	}
 
 	/**
 	 * Read file content from GitHub by path.
@@ -262,25 +330,41 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 		// Fetch blob content from GitHub
 		// GitHub API ALWAYS returns content as base64, regardless of file type
 		try {
-			const { data: blob } = await this.octokit.request(
-				`GET /repos/{owner}/{repo}/git/blobs/{file_sha}`, {
-					owner: this.owner,
-					repo: this.repo,
-					file_sha: blobSha,
-					headers: this.headers
-				});
-			if (typeof blob.content !== 'string') {
+			// 读取请求带真实中止超时（D4）：不是 race 假超时，底层连接被 abort，
+			// 没有后台扫描残留。超时错误归为检查失败，不与发布 uncertain 混用。
+			const timeout = createTimeoutSignal(CHECK_REQUEST_TIMEOUT_MS);
+			let data: { content?: unknown; encoding?: unknown };
+			try {
+				const result = await this.octokit.request(
+					`GET /repos/{owner}/{repo}/git/blobs/{file_sha}`, {
+						owner: this.owner,
+						repo: this.repo,
+						file_sha: blobSha,
+						headers: this.headers,
+						signal: timeout.signal
+					});
+				data = result.data;
+			} finally {
+				timeout.cancel();
+			}
+			if (typeof data.content !== 'string') {
+				// 保留 API 实际报告的编码：这是排查超大文件/异常 blob 的唯一线索。
 				throw new Error(
-					`无法读取「${path}」：blob 内容类型为 ${typeof blob.content}（编码：'${blob.encoding ?? 'unknown'}'). ` +
+					`无法读取「${path}」：blob 内容类型为 ${typeof data.content}（编码：'${String(data.encoding ?? 'unknown')}'）. ` +
 					`GitHub 可能不支持该 blob 格式。`
 				);
 			}
-			let content = blob.content;
+			let content = data.content;
 			if (Encryption.isEnabled()) {
 				content = await Encryption.decryptContent(content);
 			}
 			return FileContent.fromBase64(content);
 		} catch (error) {
+			// 检查超时（D4）：读取没有写入任何内容，明确报"检查超时，未执行同步"，
+			// 不进入 uncertain（那是发布结果不明的专用语义）。
+			if (isTimeoutAbort(error)) {
+				throw VaultError.network('检查超时：读取远端内容超过 30 秒未响应，已中止；未执行任何同步。', { originalError: error });
+			}
 			// Blob not found (404) is a data error, not a vault-level error
 			// Network/auth errors still converted to VaultError
 			return await this.wrapOctokitError(error, 'ignore');
@@ -581,40 +665,37 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 		// Get current state using cache when available
 		const { state: currentState, commitSha: parentCommitSha, treeSha: parentTreeSha } = await this.readFromSource();
 
-		// Create tree nodes for all changes, tracking metadata for error handling
+		// 惰性任务：只在轮到它时才真正发起 blob 创建请求。
+		// 旧实现先构造全部 Promise 再按间隔 await 结果，请求早已全部发出，
+		// 注释里的速率上限从未生效（GitHub 二级限流 ≤80 次/分钟）。
 		const operations: Array<{
 			path: string;
 			sizeBytes: number | null;
-			promise: Promise<TreeNode | null>;
+			run: () => Promise<TreeNode | null>;
 		}> = [];
 
-		// Process file writes/updates
 		for (const {path, content} of filesToWrite) {
 			operations.push({
 				path,
 				sizeBytes: content.size(),
-				promise: this.createTreeNodeFromContent(path, content, currentState)
+				run: () => this.createTreeNodeFromContent(path, content, currentState)
 			});
 		}
 
-		// Process file deletions
 		for (const path of filesToDelete) {
+			// 删除不产生 blob 请求，但仍保留在队列里以统一进度与错误处理。
 			operations.push({
 				path,
-				sizeBytes: null,  // No size for deletions
-				promise: this.createTreeNodeFromContent(path, null, currentState)
+				sizeBytes: null,
+				run: () => this.createTreeNodeFromContent(path, null, currentState)
 			});
 		}
 
-		// GitHub 二级限流：内容生成请求 ≤80/分钟、≤500/小时。
-		// 这里以约 80/分钟的速率串行推进（每 750ms 一个），避免瞬时并发触发 403。
-		const BLOB_INTERVAL_MS = 750;
+		const queue = createLazyQueue(BLOB_CREATION_RATE.minIntervalMs, BLOB_CREATION_RATE.maxInFlight);
 		const results = [];
 		for (let i = 0; i < operations.length; i++) {
-			if (i > 0) {
-				await new Promise(resolve => setTimeout(resolve, BLOB_INTERVAL_MS));
-			}
-			results.push(await operations[i].promise.then(
+			const operation = operations[i];
+			results.push(await queue.run(async () => operation.run()).then(
 				(value: TreeNode | null) => ({ status: 'fulfilled' as const, value }),
 				(reason: unknown) => ({ status: 'rejected' as const, reason })
 			));
@@ -707,6 +788,46 @@ export class RemoteGitHubVault implements IVault<"remote"> {
 			newState,
 			userWarning
 		};
+	}
+
+	/**
+	 * 严格条件发布：绑定审阅时的分支头。
+	 *
+	 * 走 GitHub 官方 createCommitOnBranch + expectedHeadOid；头不匹配时整体失败，
+	 * 不退回无条件 PATCH ref。不适用（空仓库/无期望头）时返回 unavailable，
+	 * 由上层决定是否走单独建分支流程——绝不静默降级。
+	 */
+	async publishConditional(
+		filesToWrite: Array<{ path: string; content: FileContent }>,
+		filesToDelete: string[],
+		expectedHeadOid: CommitSha,
+		message: { headline: string; body?: string }
+	): Promise<ConditionalCommitOutcome> {
+		const outcome = await createCommitOnBranch(
+			{ graphql: (query, variables) => this.octokit.graphql(query, variables) as Promise<never> },
+			{
+				owner: this.owner,
+				repo: this.repo,
+				branch: this.branch,
+				expectedHeadOid,
+				additions: filesToWrite.map(file => ({ path: file.path, content: file.content })),
+				deletions: filesToDelete,
+				message,
+				// 复用既有加密语义：内容与路径都与 createBlob / createTree 一致，
+				// 否则启用加密的用户会在这条管线上明文写入、并删不掉旧密文路径。
+				transform: {
+					isEncryptionEnabled: () => Encryption.isEnabled(),
+					encryptContent: base64 => Encryption.encryptContent(base64),
+					encryptPath: path => Encryption.encryptPath(path)
+				}
+			}
+		);
+		if (outcome.status === "committed") {
+			// 提交已建立：缓存失效，下次读取必须重新拉树，避免用旧头部生成计划。
+			this.latestKnownCommitSha = outcome.commitSha;
+			this.latestKnownState = null;
+		}
+		return outcome;
 	}
 
 	async clear(): Promise<LocalStores | null> {

@@ -1,169 +1,62 @@
-# FIT
-![Obsidian Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22fit%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)
+# Fit Extended
 
-Sync your files across mobile and desktop devices with one click.
+通过 GitHub 在手机与电脑之间同步 Obsidian 知识库。本仓库是 [joshuakto/fit](https://github.com/joshuakto/fit) 的改版分支，插件 id 为 `fit-extended`，可与原版并存安装，配置互不影响。
 
-## Community project
+在上游双向同步的基础上，本分支提供**六类文件处理规则 + 统一人工审阅**。完整说明见 [README-extended.md](README-extended.md)。
 
-This project is a community collaboration. If you'd like to contribute please check out the [Discussions section] on GitHub to suggest or discuss ideas.
+## 六类文件处理规则
 
-[Discussions section]: https://github.com/joshuakto/fit/discussions
+所有入口都作用于整个知识库，没有目录或单文件入口。每条规则都先「检查 → 生成计划 → 审阅 → 执行」。
 
-## Features
-- **Universally supported**: sync your vault across multiple devices, supports both mobile and desktop
-- Auto sync is now available 🎉
-- One-click to sync your vault
-- Conflict resolution: Stores conflicting changes from remote in the local _fit folder so you can resolve conflicts after sync
-- Guided setup: **Intuitive** settings, easy to configure even if you are new to GitHub
-- Works with existing vaults or repos
+| 规则 | 行为 |
+|---|---|
+| 仅补充缺失文件 | 来源有、目标没有才写入；目标已有同名文件不覆盖 |
+| 单向更新 | 按共同状态把来源的改动写到目标；双方都改且不同则交你决策 |
+| 单向覆盖 | 来源存在的文件一律以来源内容为准，保留目标独有文件 |
+| 单向镜像 | 使目标与来源在同步范围内一致，包括删除目标独有文件 |
+| 双向合并（不传播删除） | 交换新增与修改，一端缺失则补回 |
+| 双向同步（传播删除） | 基于共同状态交换新增、修改与删除 |
 
-**Note:** This plugin is still in beta, please backup your vault before using this plugin.
+单向四类在入口处选择方向；双向两类不设方向。
 
+## 审阅
 
-# Quick demo
+- 计划按「上传 / 写入本地 / 删除远端 / 删除本地」分组，可逐项勾选、全选、全部取消
+- 冲突直接给出双方的大小与最后修改时间，并标出更新、更大的一侧，由你选择采用本地、采用远端或手工编辑结果
+- 手工结果可以为空；双向规则写入两端，单向规则只写目标端
+- 二进制文件只提供版本选择，不做文本编辑
 
+## 忽略规则
 
-![Kapture 2024-03-15 at 17 37 07](https://github.com/joshuakto/fit/assets/34743132/27ea39b7-f54d-4c95-bf40-41972a29c26d)
+只编辑当前仓库共享的 `.gitignore`，被匹配的路径不参与同步。本机排除、个人全局规则与跟踪状态由 Git 自行管理。
 
+## 触发方式
 
+- 默认手动触发；设置项「打开知识库时自动检查变化」默认关闭，开启后只生成待审计划，不自动执行
+- 没有定时同步，也没有「启用整个仓库同步」的总开关
 
-## Setup
-1. Create a personal access token with read/write access to the repo for your vault (refer to [Github: creating a personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token)). For fine-grained tokens, the only required permission is **Contents: Read and Write** under Repository permissions. For classic tokens, the `repo` scope covers this (though it grants broader access than strictly needed).
-2. Once the personal access token is filled in, you can authenticate the user. The GitHub username, list of repositories, and branches will auto-populate.
-3. Select a repo and branch and you are ready to sync.
-<img width="1100" alt="Screenshot of FIT settings for tokens and repos" src="https://github.com/joshuakto/fit/assets/34743132/3ab3665a-5a78-468c-a936-fcf5fd2a8774">
+## 安装
 
-NOTE: For security, it's recommended to limit the token scope to only the necessary repository for your vault and avoid sharing your entire plugin settings file that contains this token.
+### BRAT
 
-## How Sync Works
+1. 安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+2. 命令面板 → BRAT: Add a beta plugin for testing
+3. 输入本仓库地址 `https://github.com/zuelwyw/fit-extended`
 
-### What gets synced
+### 手动
 
-**✅ Synced files:**
-- Regular markdown files (.md)
-- Attachments (images, PDFs, etc.)
-- Any files in your vault root
+把 release 中的 `main.js`、`manifest.json`、`styles.css` 复制到 `你的库/.obsidian/plugins/fit-extended/`，重启 Obsidian 并启用。
 
-**❌ NOT synced (protected paths):**
-- `.obsidian/` folder (Obsidian settings and plugins)
-- `_fit/` folder (conflict resolution area)
-- Hidden files like `.env`, `.gitignore` (not synced — see [#92](https://github.com/joshuakto/fit/issues/92) for planned opt-in support)
-  - Note: `.gitignore` **rules** are respected — files matched by your patterns are excluded from sync
+## 开发
 
-### Conflict handling
+```shell
+npm install
+npm run typecheck
+npm test
+npm run lint -- .
+npm run build
+```
 
-When the same file is modified both locally and remotely, FIT:
-- Keeps your local version in place
-- Saves the remote version to `_fit/path/to/file.md`
-- You can manually compare and merge the versions
-- If the same file clashes again before you resolve it, the `_fit/` version is overwritten with the latest remote version (sync doesn't fail)
+## 许可证与来源
 
-See [Common Issues](#common-issues) below for detailed conflict resolution steps.
-
-### First sync
-
-- It is advised to use a new repo for syncing an existing vault, to minimize the chance of file name conflict on the first sync
-- If your existing vault or repo is large, the initial sync would take longer and require a good internet connection
-
-### Manually trigger sync on Obsidian mobile
-
-related issue: [#190](https://github.com/joshuakto/fit/issues/190)
-
-On Obsidian mobile, linking sync to a hotkey which requires the presence of a
-keyboard is not an ideal approach to manually trigger sync. A more intuitive
-set of procedures are:
-
-- Open any repository with FIT configured
-- Swipe down from anywhere on the screen to open command menu
-- Search for "Fit: Fit Sync" and click to sync
-
-Alternative: "Fit Sync" can be pinned to the ribbon menu from "Setting >
-Appearance > Interface > Ribbon menu configuration"
-
-
-## 🔒 Security
-
-The FIT maintainers make every effort to protect your security and protect against data loss. However, mistakes can happen. Users are highly recommended to do a security review of the code of this project before trusting it with their data. You could use an AI tool for that such as Claude Code.
-
-You should also take care with security tokens you use to ensure they don't leak, because anyone with access to those can read and write your vault repository even if it's private (or worse if you configure broad unrestricted permissions on your token). In particular, **avoid syncing your .obsidian/ files** with other tools if you don't know what you're doing, and consider adding .gitignore rules to ignore .obsidian/ paths if you'll be syncing anything using git (FIT itself never syncs `.obsidian/` - see [How Sync Works](#how-sync-works)).
-
-## Common Issues
-
-<details>
-<summary><b>📁 Empty directories not syncing</b></summary>
-
-**Why:** Git (and GitHub) doesn't track empty directories. This is a fundamental limitation of Git, not a FIT bug.
-
-**Solution:** Add a placeholder file like `_gitkeep` or `README.md` to keep the folder. Empty folders will only sync once they contain files.
-
-</details>
-
-<details>
-<summary><b>📦 File size limits - "input too large" errors</b></summary>
-
-**Why:** GitHub API has file size limits (~100MB hard limit, issues with files >10MB).
-
-**Symptoms:** Error messages like "input too large to process" or "File 'X' is too large..."
-
-**Solutions:**
-- Move large files (>20MB) outside your vault before syncing
-- Manually sync large files to GitHub using other tools (to create them and any time they're modified)
-- Add the files to `.gitignore` to exclude them from sync
-
-</details>
-
-<details>
-<summary><b>⚠️ Sync conflicts - files in `_fit/` folder</b></summary>
-
-**What happens:** When the same file is modified locally AND on GitHub, FIT saves both versions:
-- Your local version stays in place
-- The remote version is saved to `_fit/path/to/file.md`
-
-**How to resolve:**
-1. Find conflict files in the `_fit/` folder
-2. Compare both versions
-3. Manually merge the changes you want to keep
-4. Delete the `_fit/` version when done
-5. Sync again
-
-**Prevention:** Sync regularly (enable auto-sync) and avoid editing the same file on multiple devices simultaneously.
-
-</details>
-
-<details>
-<summary><b>🖼️ Images/PDFs showing as corrupted text in GitHub</b></summary>
-
-**Symptoms:** Binary files (JPG, PNG, PDF) appear as gibberish text in GitHub like `����JFIF��...` instead of displaying properly
-
-**Cause:** Bug in v1.4.0-beta.3 where binary files were incorrectly read as text on some platforms
-
-**Solution:**
-1. Check file history in GitHub to find bad changes
-2. Use git to restore previous versions OR manually copy from history
-3. Update to v1.4 stable when available or a different beta version
-4. Re-sync - files will upload correctly
-
-**Note:** This only affected beta versions. Images and PDFs sync correctly in v1.4+.
-
-**More info:** See https://github.com/joshuakto/fit/issues/156 about the regression and older "correct format" error.
-
-</details>
-
-## Roadmap
-
-See [CONTRIBUTING.md](https://github.com/joshuakto/fit/blob/main/docs/CONTRIBUTING.md#roadmap--priorities) for current milestone and long-term priorities.
-
-## Relevant plugins
-There are other community plugins with more advanced git features, if you need features such as branching of your repo, [Git](https://github.com/denolehov/obsidian-git) is a nice plugin to check out.
-
-There are also other plugins for synchronizing changes such as [Git integration](https://github.com/noradroid/obsidian-git-integration), [GitHub sync](https://github.com/kevinmkchin/Obsidian-GitHub-Sync), and [YAOS](https://github.com/mahyarmirrashed/yaos). However, they do not support mobile yet as of writing this plugin.
-
-[!["Buy Me A Coffee"](https://cdn.buymeacoffee.com/buttons/v2/default-blue.png)](https://www.buymeacoffee.com/joshuakto)
-
-## Developer Documentation
-
-For developers interested in contributing to FIT or understanding its architecture, comprehensive documentation is available in the [docs/](https://github.com/joshuakto/fit/tree/main/docs) directory in GitHub.
-
-## Acknowledgements
- - This plugin used [Obsidian Sample Plugin](https://github.com/obsidianmd/obsidian-sample-plugin) as a template.
- - This plugin uses [Octokit](https://github.com/octokit/core.js/) to interface with GitHub rest api across devices.
+[MIT](LICENSE)。上游项目与作者：joshuakto/fit。

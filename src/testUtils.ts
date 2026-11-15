@@ -9,6 +9,8 @@ import { FileChange, FileStates } from "./util/changeTracking";
 import { FileContent, Base64Content, PlainTextContent } from './util/contentEncoding';
 import { FilePath } from './util/filePath';
 import { BlobSha, CommitSha, computeSha1, TreeSha } from "./util/hashing";
+import { gitBlobHash } from "./util/gitObjectHash";
+import { contentToArrayBuffer } from "./util/obsidianHelpers";
 import { LocalVault } from './localVault';
 import { fitLogger } from './logger';
 
@@ -117,7 +119,10 @@ export class FakeObsidianVault {
 			this.filesOnDisk.set(path, data);
 		},
 		remove: async (path: string) => {
+			// 与真实 Obsidian 一致：删除的文件同时从索引与磁盘消失。
+			// 只删磁盘会让 getFiles 仍返回该路径 → 被当成"读失败"（三态语义被假象破坏）。
 			this.filesOnDisk.delete(path);
+			this.vaultIndex.delete(path);
 		},
 		rmdir: async (path: string, _recursive: boolean) => {
 			// Folders are implicit in this fake; removing is a no-op that always succeeds
@@ -802,7 +807,7 @@ export class FakeRemoteVault implements IVault<"remote"> {
 		}
 		this.files.set(path, fileContent);
 		// Store blob SHA -> content mapping for readFileContent
-		const sha = await computeSha1(path + fileContent.toBase64()) as BlobSha;
+		const sha = await this.realBlobShaOf(fileContent);
 		this.blobShas.set(sha, fileContent.toBase64());
 		if (advanceCommit) {
 			this.commitSha = await computeSha1(
@@ -863,12 +868,18 @@ export class FakeRemoteVault implements IVault<"remote"> {
 	 * @param storeBlobShaMapping - If true, stores blob SHA -> content mapping for readFileContent
 	 * @returns FileStates mapping paths to blob SHAs
 	 */
+
+	/** 真实 Git blob SHA（"blob <len>\0<bytes>" 的 SHA-1），与 GitHub 返回口径一致。 */
+	private async realBlobShaOf(fileContent: FileContent): Promise<BlobSha> {
+		return gitBlobHash(contentToArrayBuffer(fileContent.toBase64()));
+	}
+
 	private async buildCurrentState(storeBlobShaMapping: boolean): Promise<FileStates> {
 		const state: FileStates = {};
 		for (const [path, content] of this.files.entries()) {
 			if (this.shouldTrackState(path)) {
 				const base64Content = content.toBase64();
-				const sha = await computeSha1(path + base64Content) as BlobSha;
+				const sha = await this.realBlobShaOf(content);
 				state[path] = sha;
 				// Store blob SHA -> content mapping for readFileContent if requested
 				if (storeBlobShaMapping) {
@@ -962,5 +973,45 @@ export class FakeRemoteVault implements IVault<"remote"> {
 	shouldTrackState(_path: string): boolean {
 		// No filtering for remote vault
 		return true;
+	}
+
+	/**
+	 * 条件发布的测试替身：语义与 RemoteGitHubVault.publishConditional 对齐。
+	 *
+	 * 严格校验 expectedHeadOid：与真实实现一样，头不匹配就整体失败、
+	 * 一个字都不写——否则集成测试会掩盖"计划过期仍然写入"的缺陷。
+	 */
+	async publishConditional(
+		filesToWrite: Array<{ path: string; content: FileContent }>,
+		filesToDelete: string[],
+		expectedHeadOid: CommitSha
+	): Promise<
+		| { status: "committed"; commitSha: CommitSha }
+		| { status: "head-changed"; expectedHeadOid: string }
+		| { status: "unavailable"; reason: string }
+	> {
+		if (!expectedHeadOid) {
+			return { status: "unavailable", reason: "缺少期望的分支头提交：无法建立严格条件，不执行发布。" };
+		}
+		if (expectedHeadOid !== this.commitSha) {
+			return { status: "head-changed", expectedHeadOid };
+		}
+		if (this.failureError) {
+			const error = this.failureError;
+			this.clearFailure();
+			throw error;
+		}
+		for (const file of filesToWrite) {
+			this.setFile(file.path, file.content);
+		}
+		for (const path of filesToDelete) {
+			this.files.delete(path);
+		}
+		this.commitSha = await computeSha1(
+			Array.from(this.files.entries())
+				.map(([path, content]) => `${path}:${content.toBase64()}`)
+				.join("\n")
+		) as CommitSha;
+		return { status: "committed", commitSha: this.commitSha };
 	}
 }

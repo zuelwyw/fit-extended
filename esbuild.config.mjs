@@ -11,7 +11,20 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
+/**
+ * 生产压缩（仅 prod 生效，开发构建保持不变）。
+ *
+ * - minifyWhitespace / minifySyntax：去掉空白与可静态化简的语法，不改变语义。
+ * - minifyIdentifiers 保持 false：保留可读标识名，便于用户看堆栈、我们排查缺陷。
+ * - 不写成整体 minify:true，避免标识名被压缩后日志与堆栈不可读。
+ * - banner 与许可证文本保留；不新增任何依赖。
+ */
+const prodMinify = prod
+	? { minifyWhitespace: true, minifySyntax: true, minifyIdentifiers: false }
+	: {};
+
 const context = await esbuild.context({
+	...prodMinify,
 	banner: {
 		js: banner,
 	},

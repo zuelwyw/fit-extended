@@ -1,6 +1,6 @@
 import { App, Modal, Setting } from "obsidian";
-import { ConflictPair, DirectionalPlan, DirectionalWriteMode, SyncDirection } from "./directionalOperations";
-import { FileChange } from "./util/changeTracking";
+import { ConflictPair } from "./conflictCleanup";
+import { SyncDirection } from "./syncTypes";
 
 abstract class OptionsModal<T> extends Modal {
 	protected resolved = false;
@@ -61,50 +61,6 @@ abstract class OptionsModal<T> extends Modal {
 	}
 }
 
-export type DirectionOptions = {
-	direction: SyncDirection;
-	writeMode: DirectionalWriteMode;
-	deleteUnique: boolean;
-};
-
-export class DirectionOptionsModal extends OptionsModal<DirectionOptions> {
-	private writeMode: DirectionalWriteMode = "overwrite";
-	private deleteUnique = false;
-
-	constructor(app: App, private direction: SyncDirection) {
-		super(app);
-	}
-
-	onOpen(): void {
-		const upload = this.direction === "upload";
-		const target = upload ? "远端" : "本地";
-		const source = upload ? "本地" : "远端";
-		this.titleEl.setText(upload ? "单向上传：选择本次范围" : "单向拉取：选择本次范围");
-		this.contentEl.createEl("p", { text: upload
-			? "本操作只从本地写入远端，不会把远端内容写回本地。下面两步各自独立，都要选择。"
-			: "本操作只从远端写入本地，不会把本地内容上传到远端。下面两步各自独立，都要选择。" });
-
-		// 两步独立判断：第一步决定同名差异怎么写，第二步决定独有文件怎么处理
-		this.contentEl.createEl("div", { cls: "fit-operation-choice-name", text: "第一步：同名差异文件如何处理" });
-		this.addChoices([
-			{ value: "overwrite", label: `用${source}内容覆盖${target}同名文件`, description: `同名但内容不同的文件，以${source}为准写入${target}。` },
-			{ value: "addOnly", label: `只补新增，不覆盖${target}已有文件`, description: `${target}已存在的同名文件一律不动，只写入${source}有而${target}没有的文件。` }
-		], value => { this.writeMode = value as DirectionalWriteMode; }, "writeMode");
-
-		this.contentEl.createEl("div", { cls: "fit-operation-choice-name", text: `第二步：${target}独有文件是否删除` });
-		this.addChoices([
-			{ value: "keep", label: `保留${target}独有文件`, description: `${target}有、${source}没有的文件保持不变。` },
-			{ value: "delete", label: `删除${target}独有文件`, description: `删除${target}有而${source}没有的文件，使${target}与${source}范围一致；执行前显示完整删除清单。` }
-		], value => { this.deleteUnique = value === "delete"; }, "deleteUnique");
-
-		this.addActions("扫描并预览", () => this.finish({
-			direction: this.direction,
-			writeMode: this.writeMode,
-			deleteUnique: this.deleteUnique
-		}));
-	}
-}
-
 export type BidirectionalOptions = { cleanup: "none" | "last" | "all" };
 export class BidirectionalOptionsModal extends OptionsModal<BidirectionalOptions> {
 	private cleanup: BidirectionalOptions["cleanup"] = "none";
@@ -137,37 +93,6 @@ export class CleanupOptionsModal extends OptionsModal<{ scope: Scope }> {
 			{ value: "all", label: "全部 _fit/ 冲突副本", description: "包括历史遗留及尚未人工合并的文件。" }
 		], value => { this.selectedScope = value; });
 		this.addActions("扫描并预览", () => this.finish({ scope: this.selectedScope }));
-	}
-}
-
-export class PlanPreviewModal extends OptionsModal<DirectionalPlan> {
-	constructor(app: App, private plan: DirectionalPlan) { super(app); }
-	onOpen(): void {
-		const upload = this.plan.direction === "upload";
-		this.titleEl.setText(upload ? "确认单向上传" : "确认单向拉取");
-		const target = upload ? "远端" : "本地";
-		const modeText: Record<string, string> = {
-			"overwrite-keep": "覆盖同名 + 保留独有",
-			"overwrite-delete": "覆盖同名 + 删除独有",
-			"addOnly-keep": "只增不覆盖 + 保留独有",
-			"addOnly-delete": "只增不覆盖 + 删除独有"
-		};
-		const added = this.plan.changes.filter(c => c.type === "ADDED").length;
-		const modified = this.plan.changes.filter(c => c.type === "MODIFIED").length;
-		const removed = this.plan.changes.filter(c => c.type === "REMOVED").length;
-		this.contentEl.createEl("p", { text: `${upload ? "本地 → 远端" : "远端 → 本地"}；${modeText[`${this.plan.writeMode}-${this.plan.deleteUnique ? "delete" : "keep"}`]}。确认后再次校验两端状态。` });
-		this.contentEl.createEl("p", {
-			cls: "fit-operation-summary",
-			text: `本次共 ${this.plan.changes.length} 个文件：新增 ${added}、覆盖 ${modified}、删除 ${removed}。未变更的文件未参与本次操作。`
-		});
-		if (this.plan.baselineMissing) {
-			this.contentEl.createEl("p", {
-				cls: "fit-operation-warning",
-				text: "注意：本次插件尚无同步基线，无法判断哪些文件有改动；将把全部可同步文件视为待写入以建立基线。"
-			});
-		}
-		renderChangeGroups(this.contentEl, this.plan.changes);
-		this.addActions(upload ? "确认上传" : "确认拉取", () => this.finish(this.plan));
 	}
 }
 
@@ -243,26 +168,11 @@ export class ConflictPreviewModal extends OptionsModal<{ scope: Scope; selected:
 	}
 }
 
-function renderChangeGroups(container: HTMLElement, changes: FileChange[]): void {
-	const labels = { ADDED: "新增", MODIFIED: "覆盖同名文件", REMOVED: "删除" };
-	for (const type of ["ADDED", "MODIFIED", "REMOVED"] as const) {
-		const group = changes.filter(change => change.type === type);
-		const details = container.createEl("details", { cls: "fit-operation-change-group" });
-		details.open = type === "REMOVED" || changes.length <= 20;
-		details.createEl("summary", { text: `${labels[type]} ${group.length} 个` });
-		const list = details.createDiv({ cls: "fit-operation-file-list" });
-		if (group.length === 0) list.createSpan({ text: "无" });
-		for (const { path } of group) list.createEl("code", { cls: `fit-operation-file fit-operation-${type}`, text: path });
-	}
-}
-
-/** 无同步基线时的明示确认：不静默全量上传 */
 export class BaselineConfirmModal extends OptionsModal<{ confirmed: boolean }> {
 	constructor(app: App, private direction: SyncDirection) {
 		super(app);
 	}
 	onOpen(): void {
-		const upload = this.direction === "upload";
 		this.titleEl.setText("尚无同步基线");
 		this.contentEl.createEl("p", {
 			text: `本插件实例还没有同步记录（独立于原 Fit 插件，配置不会自动继承），因此无法判断哪些文件有改动。`

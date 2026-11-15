@@ -57,6 +57,18 @@ export default class FitNotice {
 	}
 
 	// allows error display to override muted
+	/** 在通知上加一个按钮（用于"中止"这类运行期操作）。 */
+	addButton(text: string, onClick: () => void): void {
+		const el = this.notice?.noticeEl;
+		if (!el) return;
+		const button = el.createEl("button", { text, cls: "fit-notice-action" });
+		button.addEventListener("click", event => {
+			event.preventDefault();
+			button.disabled = true;
+			onClick();
+		});
+	}
+
 	setMessage(message: string, isError?: boolean): void {
 		if (isError) {
 			if (!this.notice) {
